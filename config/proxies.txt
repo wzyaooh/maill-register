@@ -1,0 +1,9 @@
+# Static Proxy Pool - One proxy per line (manually imported IPs)
+# The KooIP dynamic pool is configured separately via KOOIP_* env vars (see config/settings.py)
+# Supported formats:
+# ip:port
+# ip:port:username:password
+# Example:
+# 192.168.1.1:8080
+# 192.168.1.2:8080:user:pass
+
