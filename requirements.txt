@@ -1,0 +1,44 @@
+# ═══════════════════════════════════════════════════════════
+# Gmail Creator Pro v5.0 - Dependencies
+# ═══════════════════════════════════════════════════════════
+# Install:  pip install -r requirements.txt
+# Then:     playwright install chromium
+# ═══════════════════════════════════════════════════════════
+
+# ─── Core: Playwright (Primary Engine) ───
+playwright>=1.40.0
+playwright-stealth>=1.0.6
+
+# ─── Core: Selenium (Legacy Engine) ───
+selenium>=4.15.0
+webdriver-manager>=4.0.0
+beautifulsoup4>=4.12.0
+free-proxy>=1.1.0
+
+# ─── Mobile: Appium (Android/Golden Method) ───
+Appium-Python-Client>=3.1.0
+
+# ─── HTTP & Async ───
+requests>=2.31.0
+aiohttp>=3.9.0
+
+# ─── Environment & Config ───
+python-dotenv>=1.0.0
+
+# ─── Terminal UI ───
+rich>=13.7.0
+colorama>=0.4.6
+
+# ─── Data & Names ───
+faker>=22.0.0
+unidecode>=1.3.7
+
+# ─── Math (Bezier Curves for Mouse Movement) ───
+scipy>=1.11.0
+numpy>=1.26.0
+
+# ─── Voice OTP Server (Optional) ───
+flask>=3.0.0
+SpeechRecognition>=3.10.0
+pydub>=0.25.1
+waitress>=3.0.0
