@@ -1049,7 +1049,7 @@ class PageContractTests(WebFixture):
         self.assertEqual(response.mimetype, "text/html")
         self.assertEqual(rendered[0][0], "login.html")
         document = Document(response.get_data(as_text=True))
-        self.assertEqual(len(document.find("input", name="password", type="password")), 1)
+        self.assertEqual(len(document.find("ui-input", name="password", type="password")), 1)
         controls = document.find("input", name="csrf_token", type="hidden")
         self.assertEqual(len(controls), 1)
         self.assertEqual(controls[0]["value"], self.csrf())
