@@ -154,11 +154,8 @@
 
   function makeProgress(task) {
     const values = progressValues(task);
-    const node = el("progress");
-    node.max = values.total || 1;
-    node.value = Math.min(values.completed, node.max);
-    node.setAttribute("aria-label", `${actionLabels[task.action] || task.action}：${values.completed} / ${values.total}`);
-    return node;
+    return UI.progress(Math.min(values.completed, values.total || 1), values.total || 1,
+      `${actionLabels[task.action] || task.action}：${values.completed} / ${values.total}`);
   }
 
   function notify(message, type = "success") {
@@ -263,7 +260,7 @@
   }
 
   function lockFields(form) {
-    const fields = Array.from(form.querySelectorAll("input, select, textarea"));
+    const fields = Array.from(form.querySelectorAll(UI.CONTROL_SELECTOR));
     const previous = fields.map((field) => field.disabled);
     fields.forEach((field) => { field.disabled = true; });
     return () => fields.forEach((field, index) => { field.disabled = previous[index]; });
@@ -356,7 +353,7 @@
       if (!state.warmEngineTouched) $("warm-engine").value = data.engine === "selenium" ? "selenium" : "playwright";
       state.engineInitialized = true;
       if (!Object.hasOwn(engineLabels, data.engine)) {
-        $("create-engine").options[0].textContent = "默认引擎无效，请手动选择";
+        $("create-engine").placeholder = "默认引擎无效，请手动选择";
       }
     }
     syncCreation();
@@ -401,10 +398,7 @@
       const row = el("div", "distribution-row");
       const heading = el("div");
       heading.append(el("span", "", name), el("strong", "", `${text(count)} 个`));
-      const progress = el("progress");
-      progress.max = total || 1;
-      progress.value = Math.max(0, number(count));
-      progress.setAttribute("aria-label", `${name}：${text(count)} 个`);
+      const progress = UI.progress(Math.max(0, number(count)), total || 1, `${name}：${text(count)} 个`);
       row.append(heading, progress);
       return row;
     });
@@ -419,9 +413,8 @@
       [formatDate(session.session_start || session.created_at || session.started_at), session.total_attempts,
         session.successes, session.failures, duration >= 60 ? `${Math.floor(duration / 60)} 分 ${Math.round(duration % 60)} 秒` : `${Math.round(duration)} 秒`]
         .forEach((value) => row.append(el("td", "", value)));
-      const detail = el("details", "detail-box");
-      detail.append(el("summary", "", "策略与错误"), el("pre", "json-panel",
-        json({ strategies_used: session.strategies_used ?? {}, errors: session.errors ?? {} })));
+      const detail = UI.disclosure("策略与错误", [el("pre", "json-panel",
+        json({ strategies_used: session.strategies_used ?? {}, errors: session.errors ?? {} }))], { className: "detail-box" });
       const cell = el("td");
       cell.append(detail);
       row.append(cell);
@@ -529,7 +522,8 @@
     const question = task.action === "voice"
       ? "确定停止语音验证码服务？正在处理的音频请求可能被中断。"
       : "确定停止此任务？进行中的浏览器操作会被中断，已完成的数据会保留。";
-    if (!window.confirm(question)) return;
+    const confirmed = await UI.confirm({ title: "停止任务", message: question, confirmText: "停止任务", tone: "danger" });
+    if (!confirmed) return;
     await perform(button, async () => {
       const data = await api(`/api/tasks/${encodeURIComponent(task.id)}/cancel`, { method: "POST", body: {} });
       state.taskRevision += 1;
@@ -545,7 +539,7 @@
   }
 
   function creationMode() {
-    return document.querySelector('input[name="creation_mode"]:checked').value;
+    return $("create-mode").value;
   }
 
   function syncCreation() {
@@ -568,7 +562,7 @@
 
   async function submitCreation(event) {
     event.preventDefault();
-    if (!$("create-form").reportValidity()) return;
+    if (!UI.validate($("create-form"))) return;
     const mode = creationMode();
     const engine = $("create-engine").value;
     const parallel = $("create-parallel").checked;
@@ -579,8 +573,16 @@
       use_sms_api: $("create-sms").checked, parallel,
       max_threads: parallel ? Number($("create-threads").value) : 3,
     };
-    if (params.engine === "appium" && !window.confirm("Appium 现有创建流程尚未完成，不会保存创建账号。请确认外部 Appium 服务和设备已准备好。仍要启动吗？")) return;
-    if (params.parallel && !window.confirm("并行批次不支持断点恢复，并且需要预先配置固定密码（YOUR_PASSWORD 或 config/password.txt）。请确认已准备好；中断后需手动检查已保存账号。确定启动？")) return;
+    if (params.engine === "appium" && !(await UI.confirm({
+      title: "Appium 流程尚未完成",
+      message: "Appium 现有创建流程尚未完成，不会保存创建账号。\n请确认外部 Appium 服务和设备已准备好。仍要启动吗？",
+      confirmText: "仍要启动", tone: "warning",
+    }))) return;
+    if (params.parallel && !(await UI.confirm({
+      title: "确认启动并行批次",
+      message: "并行批次不支持断点恢复，并且需要预先配置固定密码（YOUR_PASSWORD 或 config/password.txt）。\n请确认已准备好；中断后需手动检查已保存账号。确定启动？",
+      confirmText: "确定启动", tone: "warning",
+    }))) return;
     await perform($("create-submit"), async () => {
       const unlock = lockFields($("create-form"));
       try {
@@ -609,16 +611,8 @@
     state.selectedAccounts.forEach((id) => { if (!ids.has(id)) state.selectedAccounts.delete(id); });
     const statuses = [...new Set(state.accounts.map((account) => account.status).filter(Boolean))].sort();
     if (changed("account-status-options", statuses)) {
-      const previous = $("account-status-filter").value;
-      const all = el("option", "", "全部状态");
-      all.value = "";
-      const options = statuses.map((status) => {
-        const option = el("option", "", accountStatuses[status]?.[0] || status);
-        option.value = status;
-        return option;
-      });
-      $("account-status-filter").replaceChildren(all, ...options);
-      if (statuses.includes(previous)) $("account-status-filter").value = previous;
+      $("account-status-filter").setOptions([{ value: "", label: "全部状态" },
+        ...statuses.map((status) => ({ value: status, label: accountStatuses[status]?.[0] || status }))]);
     }
     renderAccountRows();
     syncActionButtons();
@@ -628,15 +622,13 @@
     const accounts = filteredAccounts();
     const rowsChanged = changed("account-rows", accounts);
     if (rowsChanged || force) {
-      const openDetails = new Set(Array.from($("account-rows").querySelectorAll("details[open]")).map((item) => item.dataset.accountDetail));
+      const openDetails = new Set(Array.from($("account-rows").querySelectorAll("ui-disclosure[open]")).map((item) => item.dataset.accountDetail));
       const nodes = accounts.map((account) => {
         const id = Number(account.id);
         const row = el("tr");
         const selectCell = el("td", "checkbox-cell");
-        const checkbox = el("input");
-        checkbox.type = "checkbox";
+        const checkbox = UI.create("ui-checkbox", { "aria-label": `选择账号 ${account.email}` });
         checkbox.dataset.accountId = id;
-        checkbox.setAttribute("aria-label", `选择账号 ${account.email}`);
         checkbox.checked = state.selectedAccounts.has(id);
         selectCell.append(checkbox);
         const identity = el("td");
@@ -647,14 +639,13 @@
         const password = el("td", "password-cell");
         password.dataset.passwordCell = id;
         fillPasswordCell(password, account);
-        const details = el("details", "account-details");
-        details.dataset.accountDetail = id;
-        details.open = openDetails.has(String(id));
-        details.append(el("summary", "", "查看资料"));
         const genders = { "1": "男", "2": "女", "3": "其他" };
-        details.append(el("div", "", `生日：${text(account.birthday)}`),
+        const details = UI.disclosure("查看资料", [
+          el("div", "", `生日：${text(account.birthday)}`),
           el("div", "", `性别：${genders[account.gender] || text(account.gender)}`),
-          el("div", "", `备注：${text(account.notes)}`));
+          el("div", "", `备注：${text(account.notes)}`),
+        ], { open: openDetails.has(String(id)), className: "account-details" });
+        details.dataset.accountDetail = id;
         const detailCell = el("td");
         detailCell.append(details);
         row.append(selectCell, identity, status, el("td", "", account.strategy),
@@ -724,7 +715,11 @@
       hidePassword(id);
       return;
     }
-    if (!window.confirm("即将读取并显示该账号的明文密码，30 秒后自动隐藏。请确认周围环境可信，避免录屏或分享。")) return;
+    if (!(await UI.confirm({
+      title: "显示明文密码",
+      message: "即将读取并显示该账号的明文密码，30 秒后自动隐藏。\n请确认周围环境可信，避免录屏或分享。",
+      confirmText: "显示密码", tone: "warning",
+    }))) return;
     await perform(button, async () => {
       const data = await api(`/api/accounts/${id}/password`, { method: "POST", body: {} });
       if (state.page !== "accounts" || document.hidden) return;
@@ -740,9 +735,13 @@
   }
 
   async function runAccountTask(action, button) {
-    if (action === "warm" && !$("warm-form").reportValidity()) return;
+    if (action === "warm" && !UI.validate($("warm-form"))) return;
     const method = action === "health" ? "通过 IMAP 检查登录状态" : "在服务器启动浏览器";
-    if (!window.confirm(`确定对${selectedAccountScope()}执行${actionLabels[action]}？此操作会使用账号密码并${method}。`)) return;
+    if (!(await UI.confirm({
+      title: `确认执行${actionLabels[action]}`,
+      message: `确定对${selectedAccountScope()}执行${actionLabels[action]}？\n此操作会使用账号密码并${method}。`,
+      confirmText: `执行${actionLabels[action]}`, tone: "warning",
+    }))) return;
     const params = { account_ids: [...state.selectedAccounts] };
     if (action === "warm") {
       params.engine = $("warm-engine").value;
@@ -753,7 +752,11 @@
 
   async function exportAccounts() {
     const format = $("export-format").value;
-    if (!window.confirm(`即将导出全部 ${state.accounts.length} 个账号为 ${format.toUpperCase()}，不受筛选或勾选影响。\n\n文件包含明文密码及敏感资料，请仅保存到可信设备。确定继续？`)) return;
+    if (!(await UI.confirm({
+      title: "导出全部账号",
+      message: `即将导出全部 ${state.accounts.length} 个账号为 ${format.toUpperCase()}，不受筛选或勾选影响。\n文件包含明文密码及敏感资料，请仅保存到可信设备。确定继续？`,
+      confirmText: "确定导出", tone: "danger",
+    }))) return;
     await perform($("account-export"), async () => {
       const blob = await api("/api/accounts/export", { method: "POST", body: { format }, blob: true });
       const url = URL.createObjectURL(blob);
@@ -869,7 +872,11 @@
     syncResource("proxies");
     try {
       if (file.size > 1024 * 1024) throw new Error("文件不能超过 1 MiB。");
-      if (mode === "replace" && !window.confirm("替换将覆盖编辑区内容，包括未保存的修改。确定继续？")) return;
+      if (mode === "replace" && !(await UI.confirm({
+        title: "替换编辑区内容",
+        message: "替换将覆盖编辑区内容，包括未保存的修改。确定继续？",
+        confirmText: "替换", tone: "warning",
+      }))) return;
       const before = $("editor-proxies").value;
       const revision = resource.revision;
       const content = new TextDecoder("utf-8", { fatal: true }).decode(await file.arrayBuffer());
@@ -969,7 +976,6 @@
         control.input.disabled = Boolean(control.field.readonly || control.clear.checked
           || state.settingsSaving || state.settingsLoading);
       }
-      if (control.boolText) control.boolText.textContent = control.input.checked ? "已启用" : "未启用";
     });
     settingsScopes.forEach((scope) => {
       const count = dirtySettings(scope).length;
@@ -987,7 +993,6 @@
   }
 
   function renderSettings(fields, scope = null) {
-    const previousGroup = $("settings-group").value;
     state.savedSettings = fields;
     state.settingsControls.forEach((control, key) => {
       if (!scope || settingsScope(control.field) === scope) state.settingsControls.delete(key);
@@ -1017,58 +1022,41 @@
       const id = `setting-${field.key}`;
       label.htmlFor = id;
       label.append(el("span", "setting-key", field.key));
-      const input = el(field.choices?.length && !field.secret ? "select" : "input");
-      input.id = id;
-      input.name = field.key;
-      input.disabled = Boolean(field.readonly);
-      input.setAttribute("aria-describedby", `${id}-help`);
-      const control = { field, row, input, clear: null, baseline: null, boolText: null };
+      const control = { field, row, input: null, clear: null, baseline: null };
+      const shared = { id, name: field.key, "aria-describedby": `${id}-help`, disabled: Boolean(field.readonly) };
       row.append(label);
       let invalidValue = false;
+      let input;
       if (field.secret) {
-        input.type = "password";
-        input.autocomplete = "new-password";
-        input.value = "";
-        input.maxLength = 4096;
-        input.placeholder = field.configured ? "已配置 · 留空保留原值" : "未配置 · 输入新值";
+        input = UI.create("ui-input", { ...shared, type: "password", autocomplete: "new-password", maxlength: 4096,
+          placeholder: field.configured ? "已配置 · 留空保留原值" : "未配置 · 输入新值" });
         row.append(input);
       } else if (field.type === "bool") {
-        input.type = "checkbox";
-        input.checked = field.value === true || field.value === "true";
-        control.baseline = input.checked;
-        const wrapper = el("div", "bool-control");
-        control.boolText = el("span", "", input.checked ? "已启用" : "未启用");
-        wrapper.append(input, control.boolText);
-        row.append(wrapper);
+        const checked = field.value === true || field.value === "true";
+        input = UI.create("ui-switch", { ...shared, class: "setting-toggle", checked, "on-text": "已启用", "off-text": "未启用" });
+        control.baseline = checked;
+        row.append(input);
       } else {
         const value = Array.isArray(field.value) ? field.value.join(",") : field.value === null || field.value === undefined ? "" : String(field.value);
         if (field.choices?.length) {
+          input = UI.create("ui-select", shared);
+          row.append(input);
           const values = field.choices.map(String);
-          if (!values.includes(value)) {
-            const option = el("option", "", `${value || "空值"}（当前值无效）`);
-            option.value = value;
-            input.append(option);
-          }
-          values.forEach((choice) => {
-            const option = el("option", "", choiceLabel(field.key, choice));
-            option.value = choice;
-            input.append(option);
-          });
+          const options = values.map((choice) => ({ value: choice, label: choiceLabel(field.key, choice) }));
+          if (!values.includes(value)) options.unshift({ value, label: `${value || "空值"}（当前值无效）` });
+          input.setOptions(options, value);
+        } else if (field.type === "int") {
+          invalidValue = !/^\d+$/.test(value) || number(value) > 86400000;
+          input = UI.create("ui-number", { ...shared, min: 0, max: 86400000, step: 1,
+            value: invalidValue ? "" : value, placeholder: invalidValue ? `当前无效值：${value}` : null });
+          row.append(input);
         } else {
-          input.type = field.type === "int" ? "number" : "text";
-          input.autocomplete = "off";
-          if (field.type === "int") {
-            input.min = "0";
-            input.max = "86400000";
-            input.step = "1";
-            invalidValue = !/^\d+$/.test(value) || number(value) > 86400000;
-            if (invalidValue) input.placeholder = `当前无效值：${value}`;
-          } else input.maxLength = 4096;
+          input = UI.create("ui-input", { ...shared, type: "text", autocomplete: "off", maxlength: 4096, value });
+          row.append(input);
         }
-        input.value = invalidValue ? "" : value;
         control.baseline = input.value;
-        row.append(input);
       }
+      control.input = input;
       const help = el("p", "field-help", field.readonly
         ? "由服务器环境变量覆盖，只读。需在服务器调整后重启。"
         : field.secret ? (field.configured ? "已有凭据；不显示原值，留空不会修改。" : "尚未配置凭据。")
@@ -1077,14 +1065,9 @@
       help.id = `${id}-help`;
       row.append(help);
       if (field.secret) {
-        const clear = el("input");
-        clear.type = "checkbox";
-        clear.id = `${id}-clear`;
-        clear.disabled = Boolean(field.readonly);
-        const clearLabel = el("label", "check-label compact secret-clear");
-        clearLabel.htmlFor = clear.id;
-        clearLabel.append(clear, el("span", "", "显式清空此凭据"));
-        row.append(clearLabel);
+        const clear = UI.create("ui-checkbox", { id: `${id}-clear`, class: "secret-clear compact",
+          label: "显式清空此凭据", disabled: Boolean(field.readonly) });
+        row.append(clear);
         control.clear = clear;
       }
       state.settingsControls.set(field.key, control);
@@ -1094,15 +1077,9 @@
       $(`${item}-fields`).replaceChildren(...sections.filter((section) => settingsScope({ group: section.dataset.group }) === item));
     });
     if (scope !== "proxy-settings") {
-      const all = el("option", "", "全部分组");
-      all.value = "";
-      const options = [...groups.keys()].filter((group) => settingsScope({ group }) === "settings").map((group) => {
-        const option = el("option", "", groupLabels[group] || group);
-        option.value = group;
-        return option;
-      });
-      $("settings-group").replaceChildren(all, ...options);
-      if (groups.has(previousGroup)) $("settings-group").value = previousGroup;
+      $("settings-group").setOptions([{ value: "", label: "全部分组" },
+        ...[...groups.keys()].filter((group) => settingsScope({ group }) === "settings")
+          .map((group) => ({ value: group, label: groupLabels[group] || group }))]);
     }
     state.settingsLoaded = true;
     filterSettings();
@@ -1146,13 +1123,27 @@
     }
   }
 
+  /** 校验失败的配置项可能正被搜索或分组筛选隐藏，先清除筛选再聚焦。 */
+  function revealSettingField(control) {
+    if (!control.closest(".setting-field")?.hidden) return;
+    $("settings-search").value = "";
+    $("settings-group").value = "";
+    filterSettings();
+  }
+
   async function saveSettings(event) {
     event.preventDefault();
-    const scope = event.currentTarget.id.replace(/-form$/, "");
+    const form = event.currentTarget;
+    const scope = form.id.replace(/-form$/, "");
     const controls = dirtySettings(scope);
     if (!controls.length || state.settingsSaving) return;
+    if (!UI.validate(form, { onInvalid: revealSettingField })) return;
     const clears = controls.filter((control) => control.field.secret && control.clear.checked);
-    if (clears.length && !window.confirm(`确定清空以下凭据？相关服务可能停止工作：\n${clears.map((control) => control.field.key).join("\n")}`)) return;
+    if (clears.length && !(await UI.confirm({
+      title: "清空凭据",
+      message: `确定清空以下凭据？相关服务可能停止工作：\n${clears.map((control) => control.field.key).join("\n")}`,
+      confirmText: "确定清空", tone: "danger",
+    }))) return;
     await perform($(`${scope}-save`), async () => {
       const values = {};
       controls.forEach((control) => {
@@ -1261,13 +1252,16 @@
 
   async function runToolAction(action, button) {
     const confirmations = {
-      proxy_fetch: "此操作会从公开来源获取并测试代理，并修改服务器上的代理文件。免费代理可能不可靠或存在隐私风险。确定继续？",
-      migrate: "确定执行数据迁移？旧格式账号将导入数据库。请确认已做好备份。",
-      telegram_test: "确定向已配置的 Telegram 聊天发送真实测试通知？",
-      resume: "确定恢复保存的会话？任务会使用保存的批次参数在服务器继续运行。",
-      voice: "语音服务仅监听服务器 localhost:5000，必须配置非空且非 changeme 的 VOICE_SERVER_TOKEN。它独立运行、不使用控制台登录 Cookie，也不会被现有注册流程调用。远程使用需受保护的 HTTPS 反向代理。确定启动？",
+      proxy_fetch: ["获取免费代理", "此操作会从公开来源获取并测试代理，并修改服务器上的代理文件。\n免费代理可能不可靠或存在隐私风险。确定继续？", "warning"],
+      migrate: ["执行数据迁移", "确定执行数据迁移？旧格式账号将导入数据库。\n请确认已做好备份。", "warning"],
+      telegram_test: ["发送测试通知", "确定向已配置的 Telegram 聊天发送真实测试通知？", "primary"],
+      resume: ["恢复保存的会话", "确定恢复保存的会话？任务会使用保存的批次参数在服务器继续运行。", "primary"],
+      voice: ["启动语音验证码服务", "语音服务仅监听服务器 localhost:5000，必须配置非空且非 changeme 的 VOICE_SERVER_TOKEN。\n它独立运行、不使用控制台登录 Cookie，也不会被现有注册流程调用。\n远程使用需受保护的 HTTPS 反向代理。确定启动？", "warning"],
     };
-    if (confirmations[action] && !window.confirm(confirmations[action])) return;
+    const confirmation = confirmations[action];
+    if (confirmation && !(await UI.confirm({
+      title: confirmation[0], message: confirmation[1], confirmText: confirmation[0], tone: confirmation[2],
+    }))) return;
     await perform(button, () => startTask(action));
   }
 
@@ -1357,11 +1351,11 @@
   $("create-form").addEventListener("submit", submitCreation);
   $("create-form").addEventListener("input", syncCreation);
   $("create-form").addEventListener("change", (event) => {
-    if (event.target.name === "creation_mode") {
+    if (event.target.id === "create-mode") {
       $("create-sms").checked = creationMode() === "premium";
     }
     if (event.target.id === "create-sms" && ["ghost", "premium"].includes(creationMode())) {
-      document.querySelector(`input[name="creation_mode"][value="${$("create-sms").checked ? "premium" : "ghost"}"]`).checked = true;
+      $("create-mode").value = $("create-sms").checked ? "premium" : "ghost";
     }
     if (event.target.id === "create-engine") state.engineTouched = true;
     syncCreation();
@@ -1437,15 +1431,20 @@
     });
   });
   document.querySelectorAll("[data-resource-reload]").forEach((button) => {
-    button.addEventListener("click", () => {
+    button.addEventListener("click", () => report((async () => {
       const kind = button.dataset.resourceReload;
-      if (resourceState(kind).dirty && !window.confirm("重新读取会丢弃此文件未保存的修改。确定继续？")) return;
-      report(perform(button, () => loadResource(kind, true)).then(() => syncResource(kind)));
-    });
-    $("proxy-import-file").addEventListener("change", () => report(importProxyFile()));
-    $("proxy-check-detail").addEventListener("click", () => {
-      if (state.proxyCheckId) goToTask(state.proxyCheckId);
-    });
+      if (resourceState(kind).dirty && !(await UI.confirm({
+        title: "重新读取文件",
+        message: "重新读取会丢弃此文件未保存的修改。确定继续？",
+        confirmText: "重新读取", tone: "warning",
+      }))) return;
+      await perform(button, () => loadResource(kind, true));
+      syncResource(kind);
+    })()));
+  });
+  $("proxy-import-file").addEventListener("change", () => report(importProxyFile()));
+  $("proxy-check-detail").addEventListener("click", () => {
+    if (state.proxyCheckId) goToTask(state.proxyCheckId);
   });
 
   $("settings-search").addEventListener("input", filterSettings);
@@ -1454,23 +1453,23 @@
     $(`${scope}-form`).addEventListener("input", updateSettingsDirty);
     $(`${scope}-form`).addEventListener("change", updateSettingsDirty);
     $(`${scope}-form`).addEventListener("submit", saveSettings);
-    $(`${scope}-reload`).addEventListener("click", () => {
-      if (dirtySettings(scope).length && !window.confirm("重新读取会丢弃本页未保存的配置修改。确定继续？")) return;
-      report(perform($(`${scope}-reload`), () => loadSettings(scope)));
-    });
+    $(`${scope}-reload`).addEventListener("click", () => report((async () => {
+      if (dirtySettings(scope).length && !(await UI.confirm({
+        title: "重新读取配置",
+        message: "重新读取会丢弃本页未保存的配置修改。确定继续？",
+        confirmText: "重新读取", tone: "warning",
+      }))) return;
+      await perform($(`${scope}-reload`), () => loadSettings(scope));
+    })()));
   });
-  $("settings-form").addEventListener("invalid", (event) => {
-    if (event.target.closest(".setting-field")?.hidden) {
-      $("settings-search").value = "";
-      $("settings-group").value = "";
-      filterSettings();
-      event.target.focus();
-    }
-  }, true);
-  $("settings-validate").addEventListener("click", () => {
-    if (dirtySettings().length && !window.confirm("您有未保存的修改。校验只检查服务器已保存的配置，不包含这些修改。继续校验？")) return;
-    report(perform($("settings-validate"), () => startTask("validate", {}, "/api/settings/validate")));
-  });
+  $("settings-validate").addEventListener("click", () => report((async () => {
+    if (dirtySettings().length && !(await UI.confirm({
+      title: "校验已保存配置",
+      message: "您有未保存的修改。校验只检查服务器已保存的配置，不包含这些修改。继续校验？",
+      confirmText: "继续校验", tone: "warning",
+    }))) return;
+    await perform($("settings-validate"), () => startTask("validate", {}, "/api/settings/validate"));
+  })()));
   $("system-refresh").addEventListener("click", () => perform($("system-refresh"), async () => {
     await Promise.all([loadSystem(), loadSession(), loadTasks()]);
     notify("服务器环境与会话状态已更新。");
@@ -1478,16 +1477,20 @@
   $("voice-start").addEventListener("click", () => report(runToolAction("voice", $("voice-start"))));
   $("voice-stop").addEventListener("click", () => report(cancelTask(state.tasks.find((task) => task.action === "voice" && active(task)), $("voice-stop"))));
   $("session-resume").addEventListener("click", () => report(runToolAction("resume", $("session-resume"))));
-  $("session-clear").addEventListener("click", () => {
-    if (!window.confirm("确定永久清除服务器保存的会话断点？此操作无法撤销，但不会删除已保存的账号。")) return;
-    report(perform($("session-clear"), async () => {
+  $("session-clear").addEventListener("click", () => report((async () => {
+    if (!(await UI.confirm({
+      title: "清除会话断点",
+      message: "确定永久清除服务器保存的会话断点？\n此操作无法撤销，但不会删除已保存的账号。",
+      confirmText: "永久清除", tone: "danger",
+    }))) return;
+    await perform($("session-clear"), async () => {
       await api("/api/session", { method: "DELETE", body: {} });
       state.sessionRevision += 1;
       pendingGets.delete("/api/session");
       await loadSession();
       notify("会话断点已清除，已保存账号不受影响。");
-    }));
-  });
+    });
+  })()));
 
   syncActionButtons();
   report(showPage({ focus: false }));
