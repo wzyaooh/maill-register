@@ -1,646 +1,411 @@
-<div align="center">
+# Gmail Creator
 
-```
-  ██████╗ ███╗   ███╗ █████╗ ██╗██╗         ██╗███╗   ██╗███████╗██╗███╗   ██╗██╗████████╗██╗   ██╗
- ██╔════╝ ████╗ ████║██╔══██╗██║██║         ██║████╗  ██║██╔════╝██║████╗  ██║██║╚══██╔══╝╚██╗ ██╔╝
- ██║  ███╗██╔████╔██║███████║██║██║         ██║██╔██╗ ██║█████╗  ██║██╔██╗ ██║██║   ██║    ╚████╔╝
- ██║   ██║██║╚██╔╝██║██╔══██║██║██║         ██║██║╚██╗██║██╔══╝  ██║██║╚██╗██║██║   ██║     ╚██╔╝
- ╚██████╔╝██║ ╚═╝ ██║██║  ██║██║███████╗    ██║██║ ╚████║██║     ██║██║ ╚████║██║   ██║      ██║
-  ╚═════╝ ╚═╝     ╚═╝╚═╝  ╚═╝╚═╝╚══════╝    ╚═╝╚═╝  ╚═══╝╚═╝     ╚═╝╚═╝  ╚═══╝╚═╝   ╚═╝      ╚═╝
- ███████╗ █████╗  ██████╗████████╗ ██████╗ ██████╗ ██╗   ██╗    ██████╗  ██████╗ ██████╗  ██████╗
- ██╔════╝██╔══██╗██╔════╝╚══██╔══╝██╔═══██╗██╔══██╗╚██╗ ██╔╝    ╚════██╗██╔═══██╗╚════██╗██╔════╝
- █████╗  ███████║██║        ██║   ██║   ██║██████╔╝ ╚████╔╝      █████╔╝██║   ██║ █████╔╝███████╗
- ██╔══╝  ██╔══██║██║        ██║   ██║   ██║██╔══██╗  ╚██╔╝      ██╔═══╝ ██║   ██║██╔═══╝ ██╔══██║
- ██║     ██║  ██║╚██████╗   ██║   ╚██████╔╝██║  ██║   ██║       ███████╗╚██████╔╝███████╗╚██████╔╝
- ╚═╝     ╚═╝  ╚═╝ ╚═════╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝   ╚═╝       ╚══════╝ ╚═════╝ ╚══════╝ ╚═════╝
-```
-# 🏭 Gmail Infinity Factory 2026
+提供中文 Web 控制台的账号自动化管理项目，支持后台任务、账号管理、静态代理与 KKOIP 动态池管理，以及相互隔离的开发、正式运行环境。
 
-**The most powerful and stealthiest Gmail account automation engine of 2026**
+请仅在获得授权的范围内使用，并遵守平台及服务供应商的使用条款。
 
-[![Python](https://img.shields.io/badge/Python-3.9%2B-blue?logo=python&logoColor=white)](https://python.org)
-[![Version](https://img.shields.io/badge/Version-2026.1.0-green)](https://github.com/ShadowHacker0/gmail-infinity-factory)
-[![License](https://img.shields.io/badge/License-Proprietary-red)](LICENSE)
-[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey)](https://github.com)
-[![Stealth](https://img.shields.io/badge/Stealth-30%2F30-brightgreen)](https://github.com)
-[![Author](https://img.shields.io/badge/Author-Shadow-purple)](https://github.com/ShadowHackrs)
+## 目录
 
-</div>
+- [快速启动](#quick-start)
+- [开发与正式环境](#environments)
+- [Web 功能](#web-features)
+- [代理管理](#proxy-management)
+- [配置说明](#configuration)
+- [任务、数据与备份](#data)
+- [直接使用 Python 启动](#python-entry)
+- [项目结构](#structure)
+- [运行要求](#requirements)
+- [验证与常见问题](#validation)
+- [使用限制与版权](#legal)
 
----
+<a id="quick-start"></a>
+## 快速启动
 
-## 📖 Table of Contents
+### 1. 准备运行环境
 
-- [Web interface](#web-interface)
-- [Overview](#-overview)
-- [Key Features](#-key-features)
-- [Project Structure](#-project-structure)
-- [Requirements](#-requirements)
-- [Installation](#-installation)
-- [Configuration](#-configuration)
-- [Usage](#-usage)
-- [Module Descriptions](#-module-descriptions)
-- [Supported Providers](#-supported-providers)
-- [Legal Disclaimer](#-legal-disclaimer)
-- [Copyright](#-copyright)
+- 推荐 Python 3.10 或更高版本，最低支持 Python 3.9。
+- [start.sh](./start.sh) 适用于 macOS / Linux；Windows 可使用[直接 Python 入口](#python-entry)。
+- 首次安装需要网络连接，以下载 Python 依赖和 Playwright Chromium。
 
----
-
-## Web interface
-
-> **Current source of truth:** the executable entry point is
-> `auto_gmail_creator.py`, configuration is loaded from `.env` by
-> `config/settings.py`, and account storage is SQLite. The older promotional
-> sections below describe a different layout/menu; `main.py`,
-> `config/settings.yaml`, CloakBrowser and SecureVault are not implementations
-> in this checkout.
-
-### Development and production scripts
-
-The recommended macOS/Linux launcher is `start.sh`. It explicitly selects an
-environment and never installs or updates dependencies during a normal start.
-Run setup once for each environment you need:
+在项目目录执行所需环境的初始化命令：
 
 ```bash
+# 开发环境
 ./start.sh dev --setup
+
+# 正式环境
 ./start.sh prod --setup
 ```
 
-Setup creates independent virtual environments, installs the existing
-`requirements.txt` dependencies and Chromium, and prepares local configuration.
-Use `PYTHON=/path/to/python3.11 ./start.sh dev --setup` to choose the bootstrap
-interpreter. Python 3.10+ is recommended (minimum 3.9). On Linux, Playwright may
-also require system libraries; install those separately with the appropriate
-administrator permissions.
+`--setup` 会创建对应虚拟环境、安装 [requirements.txt](./requirements.txt) 中的依赖、下载 Chromium，并初始化环境配置与资源文件。初始化完成后不会自动启动服务。
 
-Set a different, strong `WEB_ADMIN_PASSWORD` (at least 16 characters) in each
-environment's configuration file before starting:
-
-| | Development | Production |
-| --- | --- | --- |
-| Start | `./start.sh dev` | `./start.sh prod` |
-| Default address | `http://127.0.0.1:8081` | `http://127.0.0.1:8080` |
-| Server | Flask development server | Waitress |
-| Python environment | `venv/dev/` | `venv/prod/` |
-| Configuration | `runtime/dev/.env` | `runtime/prod/.env` |
-| Accounts, resources and tasks | `runtime/dev/` | `runtime/prod/` |
-| Browser default | Headed | Headless |
-| Server logging | DEBUG | INFO |
-
-Inside each runtime directory, accounts live in `data/database.db`, task
-records/logs in `data/web/`, server logs in `data/web/server.log`, and proxies in
-`config/proxies.txt`. The Web UI identifies the selected environment, and its
-login cookies are isolated as well. Configurable file paths cannot point outside
-the selected environment.
-
-Only the names and User-Agent seed resources are copied during initialization.
-Existing root/worktree passwords, proxies, accounts, cookies and task records
-are **not** imported automatically. Re-running setup preserves environment files
-and data. Back up and migrate any existing runtime data explicitly before using
-it in production. Runtime directories and virtual environments are Git-ignored.
-
-Development mode only accepts loopback bind addresses. Templates reload on
-change, but Python code changes require a restart: automatic process reload is
-disabled so it cannot silently interrupt browser tasks. The interactive debugger
-is disabled. Production does not use Flask's development server or debugger.
+如需指定 Python：
 
 ```bash
-# Optional port override
-./start.sh dev --port 8082
+PYTHON=/path/to/python3.11 ./start.sh dev --setup
+```
 
-# Production behind a protected HTTPS reverse proxy
+### 2. 设置管理员密码
+
+根据需要编辑以下配置文件：
+
+| 环境 | 配置文件 |
+| --- | --- |
+| 开发 | `runtime/dev/.env` |
+| 正式 | `runtime/prod/.env` |
+
+为 `WEB_ADMIN_PASSWORD` 设置至少 **16 个字符**的强密码。开发、正式环境应使用不同的密码。系统没有默认管理员密码，登录页面只需输入管理员密码。
+
+可以生成随机密码后，将结果填入相应配置文件。以下示例使用开发环境解释器；仅初始化正式环境时，将 `dev` 替换为 `prod`：
+
+```bash
+venv/dev/bin/python -c "import secrets; print(secrets.token_urlsafe(24))"
+```
+
+配置模板：
+
+- [开发环境模板](./config/environments/dev.env.example)
+- [正式环境模板](./config/environments/prod.env.example)
+
+### 3. 启动服务
+
+```bash
+./start.sh dev
+# 浏览器访问 http://127.0.0.1:8081
+```
+
+```bash
+./start.sh prod
+# 浏览器访问 http://127.0.0.1:8080
+```
+
+脚本以前台方式运行，按 `Ctrl+C` 停止。长期部署可使用 systemd、launchd 等进程管理工具。
+
+普通启动不会安装或更新依赖；需要安装或更新时显式执行对应环境的 `--setup`。
+
+<a id="environments"></a>
+## 开发与正式环境
+
+| 项目 | 开发环境 | 正式环境 |
+| --- | --- | --- |
+| 启动命令 | `./start.sh dev` | `./start.sh prod` |
+| 默认监听地址 | `127.0.0.1:8081` | `127.0.0.1:8080` |
+| Web 服务器 | Flask 开发服务器 | Waitress |
+| Python 虚拟环境 | `venv/dev/` | `venv/prod/` |
+| 运行根目录 | `runtime/dev/` | `runtime/prod/` |
+| 默认浏览器模式 | 有头模式 | 无头模式 |
+| 服务日志级别 | DEBUG | INFO |
+| 页面标识 | 开发环境 | 正式环境 |
+
+两个环境分别保存配置、代理文件、账号数据库、断点、任务记录和日志，并使用不同的登录 Cookie。它们可以同时运行；同一环境只允许一个 Web 服务使用其任务目录。
+
+初始化时仅复制姓名库和 User-Agent 种子资源，代理文件从空列表开始。再次初始化会保留现有配置和数据。配置中的文件路径必须位于所选环境目录内。
+
+### 开发模式
+
+- 仅允许监听本机回环地址。
+- 页面模板支持自动重载。
+- 修改 Python 代码后需要重启服务。
+- 不启用交互式调试器或自动进程重载，以避免正在执行的浏览器任务被意外中断。
+
+### 正式部署
+
+可以显式指定监听地址和端口：
+
+```bash
 ./start.sh prod --host 0.0.0.0 --port 8080
 ```
 
-For HTTPS deployments, set `WEB_COOKIE_SECURE=true` in the production environment
-file. Keep the default loopback binding unless remote access is deliberately
-configured. Use separate provider credentials and external Appium/voice service
-deployments as needed: runtime isolation does not provision separate physical
-devices or change those services' existing ports.
+远程访问应通过 HTTPS 反向代理或受信任的加密隧道，并使用防火墙限制访问范围。使用 HTTPS 时，在正式环境配置中设置：
 
-Both scripts run in the foreground; stop with `Ctrl+C`. Use a process manager
-such as systemd or launchd for a persistent production deployment. `--setup`
-only prepares the environment; it does not start a server.
-
-### Existing direct Python entry point
-
-Use Python 3.10+ for a new installation and an isolated environment:
-
-```bash
-python3 -m venv venv
-source venv/bin/activate                 # Windows: venv\Scripts\activate
-python -m pip install -r requirements.txt
-python -m playwright install chromium
+```dotenv
+WEB_COOKIE_SECURE=true
 ```
 
-Set `WEB_ADMIN_PASSWORD` in the server environment or in a local `.env` file.
-Use a unique password of at least 16 characters; there is no default password,
-public registration, or unauthenticated setup endpoint. Never commit this file.
-The browser login only asks for this administrator password.
+本机明文 HTTP 测试时保持 `false`，否则浏览器不会发送安全 Cookie。
+
+修改端口示例：
 
 ```bash
-# Web interface, local access: http://127.0.0.1:8080
-python auto_gmail_creator.py
-
-# LAN/server access: http://SERVER_ADDRESS:8080
-python auto_gmail_creator.py --host 0.0.0.0 --port 8080
-
-# Equivalent module entry point
-python -m web --host 0.0.0.0 --port 8080
+./start.sh dev --port 8082
 ```
 
-The application now starts the Web interface by default. The old interactive
-terminal menu has been removed; `--web` remains accepted for existing launch
-commands but is no longer required. Waitress is used instead of Flask's
-development server, and the launcher resolves the project directory automatically.
-Background creation and resume operations live in `core/creation_flow.py`;
-`core/progress.py` only provides non-interactive task progress and output.
+环境隔离针对项目配置、运行文件和登录会话。短信供应商账户、代理出口、Appium 设备和语音服务端口等外部资源，需要按部署需求单独规划。
 
-Direct Python launch without `--env` retains the original root `.env` and
-`data/` layout for compatibility. It does not use either isolated environment.
-After installing dependencies in a chosen Python environment, the equivalent
-isolated commands (also available on Windows) are:
+<a id="web-features"></a>
+## Web 功能
+
+| 菜单 | 功能 |
+| --- | --- |
+| 总览 | 账号数量、可用比例、策略与短信服务分布、任务动态、会话历史和服务配置状态 |
+| 创建账号 | Ghost、Premium、YouTube、Workspace 模式；选择引擎、数量、短信验证及并行参数 |
+| 任务与日志 | 执行进度、日志、任务参数、结构化结果、历史记录和停止操作 |
+| 账号管理 | 搜索、状态筛选、批量选择、密码按需显示、导出、健康检查和养号 |
+| 代理管理 | 静态代理编辑与文件导入、KKOIP 配置、选池策略、代理检测、公开代理获取和检测统计 |
+| 资源管理 | 姓名库、User-Agent 文件编辑与保存 |
+| 系统配置 | 分组查看和编辑账号、浏览器、短信、验证码、行为及通知等配置 |
+| 工具与服务 | 配置自检、账号数据迁移、Telegram 测试、短信余额查询、断点恢复与清除、语音服务启停 |
+
+### 创建与养号
+
+- 创建数量：每批 **1–100** 个账号。
+- 创建引擎：Playwright、Selenium，以及实验性的 Appium 流程。
+- Ghost 使用标准流程且默认不启用短信 API；Premium 默认启用短信 API。
+- YouTube、Workspace 使用各自的创建入口，可按页面选项启用短信验证。
+- Playwright / Selenium 支持串行和并行创建，并行数量为 **1–5** 个工作线程。
+- 并行创建需要先配置固定账号密码；串行创建可生成密码。
+- 创建页的注册前预热时长为 **0–60 分钟**，由 Selenium 非短信路径使用。
+- 账号管理页支持通过 Playwright 或 Selenium 对全部或选中的账号养号，时长为 **1–60 分钟**。
+
+### 账号检查与导出
+
+- 健康检查通过 IMAP 进行，并将可确定的状态更新写入数据库。
+- 密码默认隐藏，显式查看后会自动隐藏，离开账号页面也会清除显示。
+- 支持 CSV、JSON 和 `邮箱:密码` 格式的 TXT 导出。
+- 导出包含全部账号，不受页面搜索或勾选范围影响。
+- 导出文件包含明文密码。CSV 会对可能被电子表格当作公式的单元格加前导单引号；需要原始值时使用 JSON 或 TXT。
+
+<a id="proxy-management"></a>
+## 代理管理
+
+### 静态代理
+
+在「代理管理」中粘贴文本，或导入 UTF-8 TXT 文件。支持追加和替换编辑区内容，文件及合并后的内容最多 **1 MiB**。
+
+每行一条代理，支持以下格式：
+
+```text
+# 无认证代理
+192.0.2.10:8080
+
+# 带认证代理：host:port:user:pass
+198.51.100.20:8080:example-user:example-password
+```
+
+- `#` 开头的行为注释。
+- 按上述格式填写，不要添加 `http://`、`socks5://` 等 URL 前缀。
+- 文件导入只更新编辑区，点击「保存代理文件」后才写入服务器。
+- 列表预览隐藏认证信息；原始文本编辑区仍显示明文，请勿公开分享。
+- 「获取免费代理」会连接公开来源、检测并保存代理。完成后可重新读取文件。
+
+### KKOIP 动态池
+
+动态池配置和选池策略都位于独立的「代理管理」菜单。
+
+| 配置项 | 作用 |
+| --- | --- |
+| `KOOIP_ENABLED` | 启用动态池 |
+| `KOOIP_USER_ID` | 用户 ID |
+| `KOOIP_AUTH_NAME` / `KOOIP_AUTH_PASSWORD` | 认证信息 |
+| `KOOIP_COUNTRY` | 国家或区域参数 |
+| `KOOIP_GATEWAY` / `KOOIP_GATEWAY_PORT` | 网关与端口 |
+| `KOOIP_SESSION_POOL_SIZE` | 粘性会话池容量 |
+| `KOOIP_STICKY_SESSION` | 是否使用粘性会话 |
+| `KOOIP_ROTATE_INTERVAL` | 会话轮换间隔 |
+| `PROXY_POOL_PREFERENCE` | `auto`、`static` 或 `kooip` |
+
+页面名称为 **KKOIP**，配置字段使用 `KOOIP_*`，动态池标识为 `kooip`。请按供应商实际提供的网关及认证要求填写参数。
+
+### 池状态
+
+- 静态条目数来自最近读取或保存的代理文件。
+- 动态容量表示配置的会话数量，不是已确认的独立出口 IP 数量。
+- 健康统计取自最近完成的代理检测任务，并标注检测时间。
+- 检测结果是历史快照；修改配置或代理文件后，应重新检测。
+- 每个后台任务会创建自己的代理池。
+
+<a id="configuration"></a>
+## 配置说明
+
+业务配置由 [config/settings.py](./config/settings.py) 定义，Web 配置表单按其声明生成。代理相关字段集中在「代理管理」，其他字段位于「系统配置」。
+
+- 业务配置保存到当前环境的 `.env`，后续任务读取新的配置快照。
+- 服务器环境变量优先于 `.env`；被环境变量覆盖的配置在页面中显示为只读。
+- 密钥不回传原值，留空表示保留，显式清空才会删除。
+- 代理页和系统配置页分别保存，保存或重新读取一页不会丢弃另一页未保存的编辑。
+- 业务任务运行期间，配置、资源文件及断点的修改会被阻止。
+- 管理员认证和 Cookie 设置在服务启动时读取，修改后需要重启服务。
+- 已运行的语音服务维持启动时的配置，修改后需重新启动该服务。
+
+### Web 管理配置
+
+| 配置项 | 说明 |
+| --- | --- |
+| `WEB_ADMIN_PASSWORD` | 必填，至少 16 个字符的管理员密码 |
+| `WEB_SECRET_KEY` | 可选的会话签名密钥；未配置时重启会使现有登录失效 |
+| `WEB_COOKIE_SECURE` | HTTPS 部署设为 `true`，本机 HTTP 测试设为 `false` |
+
+登录会话有效期为 8 小时。修改管理员密码时，如配置了固定 `WEB_SECRET_KEY`，也应轮换该密钥。各环境应使用独立的密码、签名密钥和服务凭据。
+
+### 服务集成
+
+| 类别 | 已接入服务 | 主要配置 |
+| --- | --- | --- |
+| 短信验证 | 5sim、SMS-Activate、OnlineSIM、GetSMS | `FIVESIM_API_KEY`、`SMS_ACTIVATE_API_KEY`、`ONLINESIM_API_KEY`、`GETSMS_API_KEY` |
+| 短信余额查询 | 5sim、SMS-Activate | 对应供应商 API 密钥 |
+| 验证码服务 | 2Captcha、Anti-Captcha、CapMonster | `TWOCAPTCHA_API_KEY`、`ANTICAPTCHA_API_KEY`、`CAPMONSTER_API_KEY` |
+| 通知 | Telegram | `TELEGRAM_BOT_TOKEN`、`TELEGRAM_CHAT_ID` |
+| 语音验证码 | 独立语音服务 | `VOICE_SERVER_TOKEN` |
+
+「已配置」只表示存在配置值，不代表网络连通、余额充足或服务调用成功。短信、验证码等第三方服务可能收费；Telegram 测试会实际发送消息。
+
+<a id="data"></a>
+## 任务、数据与备份
+
+以下路径均相对于所选环境的运行根目录：
+
+| 路径 | 内容 |
+| --- | --- |
+| `.env` | 环境配置及凭据 |
+| `data/database.db` | SQLite 账号数据库与会话统计 |
+| `data/web/tasks.db` | 后台任务记录 |
+| `data/web/*.log` | 任务日志及服务日志 |
+| `data/session_state.json` | 串行批次恢复断点 |
+| `config/proxies.txt` | 静态代理 |
+| `config/user_agents.txt` | User-Agent 资源 |
+| `data/names.txt` | 姓名资源 |
+
+### 任务行为
+
+- 每个环境同一时间允许一个业务任务，可同时运行一个语音服务任务。
+- 并行创建属于同一个后台任务，由任务内部管理工作线程。
+- 关闭网页或退出登录不会停止后台任务。
+- 「执行完成」表示操作已返回，不代表全部成功，应检查结果中的成功数、失败数和错误信息。
+- 串行批次按已完成账号保存断点，支持多次中断后继续恢复。
+- 并行批次不支持断点恢复；停止后已保存账号仍保留，未完成的工作需要重新安排。
+- POSIX 系统停止任务时先请求退出，必要时在十秒后强制清理进程组。Windows 下需注意检查残留浏览器子进程。
+- 停止或重启 Web 服务会影响其后台任务，部署操作应尽量安排在任务空闲时。
+
+### 迁移与备份
+
+「工具与服务 → 数据迁移」可将运行目录内的 `data/accounts.json` 或 `data/accounts.txt` 导入 SQLite。迁移是显式操作，不在启动时自动执行。
+
+迁移已有环境前，先停止相关服务并备份配置、数据库、任务记录和资源文件，再将需要的数据放入目标环境。开发、正式环境的运行目录不会自动互相复制数据。
+
+配置、运行目录及虚拟环境被 Git 忽略。数据库、原始日志和导出文件可能包含明文凭据，请限制文件权限并保护备份。页面的自动脱敏不能替代对原始文件的保护。
+
+<a id="python-entry"></a>
+## 直接使用 Python 启动
+
+在已安装依赖的 Python 环境中，也可以使用统一入口：
 
 ```bash
 python auto_gmail_creator.py --env dev
 python auto_gmail_creator.py --env prod
+python -m web --env prod --host 127.0.0.1 --port 8080
 ```
 
-For remote access, put the Web service behind an **HTTPS reverse proxy** or an
-encrypted tunnel. With HTTPS, set `WEB_COOKIE_SECURE=true` before starting.
-Do not set this flag for plain HTTP local testing, because browsers will then
-refuse to send the session cookie. Do not expose the HTTP port directly to the
-public Internet; use firewall restrictions. Proxy headers are deliberately not
-trusted, so login throttling behind a proxy is shared by its source IP.
+不传 `--env` 时，服务使用项目根目录的 `.env` 和 `data/`，默认监听 `127.0.0.1:8080`。`--web` 参数可选。
 
-Sessions expire after eight hours and, by default, after a server restart.
-An optional strong `WEB_SECRET_KEY` makes sessions survive restarts; keep it
-secret. Changing the administrator password should be accompanied by rotating
-that key if it was explicitly configured.
+```bash
+python auto_gmail_creator.py --host 127.0.0.1 --port 8080
+```
 
-### Feature coverage
+### Windows 示例
 
-| Existing capability | Web operation |
-| --- | --- |
-| Ghost / Premium account creation | Creation page: standard flow, SMS on/off |
-| YouTube / Workspace flow | Creation page: flow selector |
-| Playwright / Selenium / Appium | Creation page: engine selector |
-| Serial multi-account tasks | Creation page: quantity and warmup duration |
-| Previously standalone threaded batch runner | Creation page: parallel switch, 1–5 workers |
-| Dashboard, strategies, batch history | Overview page and structured task results |
-| Configuration overview | Shared configuration editor covering **every** `Config` environment field; proxy groups live in their dedicated menu |
-| Saved accounts | Search, select, reveal password explicitly |
-| CSV / JSON / TXT export | Authenticated download, with plaintext-credential warning |
-| Network and proxy checks | Proxy page: background test and result/log view |
-| Static proxy import | Dedicated Proxy Management page: paste text, import UTF-8 TXT (append/replace), preview and save |
-| Names, user agents | Resource text editors with validation |
-| KKOIP dynamic proxy pool | Dedicated Proxy Management page: credentials, capacity, sticky sessions, rotation and pool preference |
-| Account health check | All accounts or selected accounts; persisted status updates |
-| Post-creation warming module | All/selected accounts, Playwright or Selenium |
-| Public proxy fetching | Background fetch/test/save to configured proxy file |
-| Telegram test | Connection test plus actual test-message delivery |
-| SMS balance helper | 5sim / SMS-Activate, the providers supported by the existing helper |
-| Startup configuration validation | Tools/settings: background validation report |
-| Old account-data migration | Tools: explicit migration into SQLite |
-| Interrupted serial batch | Tools: inspect, resume, or clear saved state |
-| Voice OTP server | Tools: start and stop, task log and status |
-| Ending a browser session | Web logout; server shutdown remains a deployment operation |
+```powershell
+py -3 -m venv venv\dev
+.\venv\dev\Scripts\python.exe -m pip install -r requirements.txt
+.\venv\dev\Scripts\python.exe -m playwright install chromium
+.\venv\dev\Scripts\python.exe -m web.runtime dev
+```
 
-All tasks have persistent history, progress, logs, structured results and a stop
-operation. Completed task status means the operation returned, **not** that every
-account succeeded: inspect successes/failures and validation errors in its result.
-Only one automation/maintenance task may run at a time, with one optional voice
-service alongside it. Parallel creation runs its workers inside that one task.
-There is no arbitrary shell command execution API.
+配置 `runtime\dev\.env` 中的管理员密码后启动：
 
-### Configuration and data behavior
+```powershell
+.\venv\dev\Scripts\python.exe auto_gmail_creator.py --env dev
+```
 
-- Open **Proxy Management** (`#proxies`) for static proxies, KKOIP and proxy
-  selection settings. These fields share the settings editor and validation API
-  with the general configuration page, without duplicate controls. Saving or
-  reloading one page preserves unsaved configuration drafts on the other page.
-- TXT import stages content in the proxy editor; it does not overwrite the
-  server file until **Save proxy file** is clicked. Files must be UTF-8 and the
-  combined content must not exceed 1 MiB. The preview table hides credentials.
-- Proxy cards show the last read/saved static count and configured dynamic
-  session capacity, not live exit IPs. Health counts come from the latest
-  completed proxy check in retained task history and are explicitly marked as
-  a historical snapshot. Run another check after changing the configuration.
-- The settings page edits `.env` atomically. Environment variables set by the
-  deployment take precedence and are shown read-only.
-- Passwords and API tokens are never returned by the settings API. An untouched
-  secret is preserved; explicit clearing removes it. New tasks receive a fresh
-  configuration snapshot without restarting the Web server.
-- Configuration, resources and saved sessions cannot be changed while a business
-  task is active. A running voice service retains its startup configuration until
-  it is restarted.
-- Resource editors only access `.txt` files under `config/` and `data/`.
-  Proxy syntax matches the current engines: `host:port` or `host:port:user:pass`,
-  one proxy per line; comment lines start with `#`.
-- Existing accounts are read from `data/database.db`; use the migration operation
-  to import legacy `data/accounts.json` / `data/accounts.txt`. Migration is an
-  explicit Web operation, not a startup side effect.
-- Task state and logs live under `data/web/`, excluded from Git. Browser-visible
-  logs/results redact configured secrets and stored account passwords. Raw worker
-  logs and account exports **can contain credentials**: protect the server files,
-  backups and downloaded exports. SQLite is not encrypted by this change.
-- CSV cells that could be interpreted as spreadsheet formulas receive a leading
-  apostrophe. Use JSON or TXT when exact unmodified credential values are needed.
-- The launcher prevents a second Web server from using the same project's
-  task store.
-- Serial tasks checkpoint after each completed account. Repeated resume preserves
-  earlier counts and indexes. The in-progress account is not checkpointed until
-  its attempt finishes. Parallel batches do **not** currently support resume;
-  stopping one preserves already stored accounts but discards unfinished work.
-- Stop sends a termination signal, allowing cleanup, then forcefully terminates
-  the worker process group after ten seconds if necessary on POSIX systems.
-  Workers also stop when their Web parent disappears. Windows termination cannot
-  guarantee cleanup of browser grandchildren; check external processes there.
+正式环境使用相同流程，将命令及路径中的 `dev` 替换为 `prod`。
 
-### External services and inherited limitations
+<a id="structure"></a>
+## 项目结构
 
-- Appium requires an independently started server at `127.0.0.1:4723` and a
-  connected Android device/emulator. Its existing creation flow is incomplete
-  and does not persist a verified account; the Web UI does not claim otherwise.
-  Parallel Appium jobs are rejected.
-- Playwright needs installed browser binaries. Headed mode on a server requires
-  a graphical session/display; configure `HEADLESS_MODE` appropriately.
-- The optional voice worker requires `VOICE_SERVER_TOKEN` and binds only to
-  `127.0.0.1:5000` when launched from Web. Publish `/voice` separately through an
-  authenticated HTTPS reverse proxy if your telephony provider needs a webhook.
-  Both `/voice` and `/otp` require the configured token via `X-Voice-Token` or
-  the `token` query parameter. Header authentication is preferred.
-  Audio conversion also requires FFmpeg. The main creation engines do not
-  currently consume the voice OTP API automatically.
-- Configuration switches reflect existing code; exposing them does not implement
-  previously unused flags or make every engine support every setting. In
-  particular, the user-selected warmup duration belongs to the Selenium path;
-  Playwright has its own existing pre/post-warming timing.
-- A configured API key or an open Appium port is not a successful connectivity
-  test. Use the available check operations and inspect their results.
-- Use automation only where authorized and comply with provider terms.
+```text
+maill-register/
+├── start.sh                   # 开发 / 正式环境启动与初始化
+├── auto_gmail_creator.py       # Python Web 启动入口
+├── requirements.txt           # Python 依赖
+├── config/
+│   ├── settings.py            # 业务配置声明
+│   ├── constants.py           # 常量
+│   └── environments/          # 开发 / 正式配置模板
+├── web/
+│   ├── server.py              # Flask / Waitress 启动及服务锁
+│   ├── runtime.py             # 独立运行目录初始化
+│   ├── app.py                 # 登录、页面路由与 API
+│   ├── configuration.py       # 配置与资源文件管理
+│   ├── tasks.py               # 任务存储与子进程管理
+│   ├── worker.py              # 业务任务调度
+│   ├── templates/             # 中文页面模板
+│   └── static/                # 页面样式、交互及业务脚本
+├── core/
+│   ├── creation_flow.py       # 创建与恢复流程
+│   ├── batch_runner.py        # 并行批次
+│   ├── runners.py             # Playwright / Appium 流程
+│   ├── selenium_runner.py     # Selenium 流程
+│   ├── progress.py            # 后台进度与输出
+│   ├── database.py            # SQLite 存储
+│   ├── account_manager.py     # 账号管理与导出
+│   ├── account_warmer.py      # 账号养号
+│   ├── health_checker.py      # IMAP 健康检查
+│   ├── proxy_manager.py       # 静态与动态代理池
+│   └── session_resume.py      # 断点存储与恢复
+├── services/                  # 短信与语音服务
+├── js/                        # 浏览器端辅助脚本
+├── data/                      # 数据及资源种子文件
+├── tests/                     # 回归测试
+├── runtime/                   # 各环境运行数据，初始化后生成
+└── venv/                      # 各环境虚拟环境，初始化后生成
+```
 
-### Validation
+<a id="requirements"></a>
+## 运行要求
 
-The regression tests use the Python standard-library test runner. They do not
-create real accounts, make paid SMS requests, or contact Telegram:
+- **Playwright**：需要安装浏览器二进制；Linux 可能还需系统库，安装步骤应使用相应管理员权限。
+- **有头浏览器**：服务器需要可用的图形会话；正式环境模板默认启用无头模式。
+- **Selenium**：需要可用的 Chrome 及驱动环境。
+- **Appium**：需要独立运行 `127.0.0.1:4723` 服务并连接 Android 设备或模拟器。当前创建路径为实验性实现，不保存已验证账号，也不支持并行创建。
+- **语音服务**：从 Web 启动时监听 `127.0.0.1:5000`，需要非空且非 `changeme` 的 `VOICE_SERVER_TOKEN`；音频转换需要 FFmpeg。
+- `/voice` 和 `/otp` 使用 `X-Voice-Token` 请求头或 `token` 查询参数认证，优先使用请求头。远程回调需要单独配置受保护的 HTTPS 入口。
+- 语音服务独立运行，当前创建流程不会自动读取语音 OTP API。
+- 配置开关的实际效果取决于对应引擎；任务中的验证码、平台验证和外部服务结果均应以实际执行结果为准。
+
+<a id="validation"></a>
+## 验证与常见问题
+
+### 回归测试
+
+测试使用 Python 标准库 `unittest`，覆盖登录、配置、资源、任务、断点、进程生命周期以及开发／正式环境隔离。测试不创建真实账号，不购买短信，不向 Telegram 发送消息；部分测试会临时启动本机 HTTP 服务。
+
+在项目目录使用已安装依赖的解释器运行：
+
+```bash
+venv/dev/bin/python -m unittest discover -s tests -p 'test_web*.py' -v
+```
+
+也可以在激活虚拟环境后执行：
 
 ```bash
 python -m unittest discover -s tests -p 'test_web*.py' -v
 ```
 
----
-
-## 🌐 Overview
-
-**Gmail Infinity Factory 2026** is an advanced Gmail account automation engine built on next-generation stealth technology. It leverages **CloakBrowser** and **Playwright** with a multi-layer architecture that accurately mimics real human behavior and evades all automated detection systems.
-
-The project is written entirely in **Python 3.9+** and ships with:
-
-- An authenticated Web dashboard with background tasks and live logs
-- AES-128 encrypted credential storage via **SecureVault**
-- Intelligent proxy rotation with automated health-checking
-- A fully integrated synthetic human identity generator
-- Complete SMS verification support to bypass phone challenges
-- An account warming engine covering YouTube, Google Search, and Gmail
-
----
-
-## ✨ Key Features
-
-### 🧬 Stealth & Detection Evasion
-
-| Feature | Details |
-|---------|---------|
-| **CloakBrowser** | C++-level stealth engine — passes 30/30 detection tests |
-| **Browser Fingerprinting** | 50,000+ unique digital fingerprints with round-robin rotation |
-| **Mouse Behavior Engine** | Human-like cursor movement via Bézier curve algorithms |
-| **Typing Simulator** | Character-by-character input with randomized delays to bypass bot detection |
-| **WebGL / Canvas Spoofing** | GPU ID and Canvas fingerprint forgery |
-| **AudioContext Spoofing** | Audio fingerprint randomization |
-| **TimeZone Auto-detection** | Automatically derives timezone & locale from proxy IP (GeoIP) |
-
-### 🔐 Security & Credential Storage
-
-- **SecureVault** — Fernet symmetric encryption (AES-128-CBC + HMAC-SHA256) for every credential record
-- **Sensitive Data Masking** — Passwords, emails, and phone numbers are automatically masked in all log output
-- **Encrypted Key Persistence** — Vault key is stored locally and reused across sessions
-
-### 👤 Identity Generation
-
-- **PersonaGenerator** — Generates complete human personas: first/last name, age, city, state, occupation, interests
-- **Faker / Mimesis integration** — Realistic US-based names drawn from a pool of 50+ cities and 50 states
-- Supports both male and female personas with ages ranging from 18 to 65
-
-### 📱 SMS Verification
-
-| Provider | Site | Notes |
-|----------|------|-------|
-| **5sim** | 5sim.net | Highest success rate — real SIM cards |
-| **sms-activate** | sms-activate.ru | Reliable Russian provider |
-| **TextVerified** | textverified.com | Real US numbers |
-| **VirtualSMS** | Various | Free alternative |
-
-### 🌐 Proxy Management
-
-- Supports `HTTP` / `HTTPS` / `SOCKS5`
-- Automated health-check before each operation
-- Intelligent rotation — proxies are blacklisted automatically after 3 consecutive failures
-- Full authentication support: `user:pass@host:port`
-
-### 🔥 Account Warming
-
-- **Gmail Activity Simulator** — Reading, composing, labeling emails
-- **YouTube Warmup Engine** — Real watch sessions and interactions
-- **Google Search Simulator** — Organic browsing and click-through
-- **Reputation Builder** — Sender score and trust-signal cultivation
-
----
-
-## 🗂️ Project Structure
-
-```
-gmail_infinity_factory_2026/
-│
-├── auto_gmail_creator.py       # Entry point — authenticated Web server
-├── web/                       # Web pages, API, authentication and task workers
-├── requirements.txt           # Python dependencies
-├── .gitignore                 # Git exclusions
-│
-├── config/                    # Configuration files
-│   ├── settings.yaml          # Master config (SMS, CAPTCHA, Proxy, Browser)
-│   ├── fingerprints.json      # Digital fingerprint database (50k+ entries)
-│   └── proxies.txt            # Proxy list
-│
-├── core/                      # Core stealth engine
-│   ├── __init__.py
-│   ├── creation_flow.py        # Shared non-interactive creation and resume flow
-│   ├── progress.py             # Background task progress and log output
-│   ├── stealth_browser.py     # Stealth browser framework (CloakBrowser + Playwright)
-│   ├── behavior_engine.py     # Human behavior simulation (Mouse, Keyboard, Scroll)
-│   ├── fingerprint_generator.py  # Fingerprint generator (UA, Screen, GPU, Audio, Font)
-│   ├── detection_evasion.py   # Detection bypass layer (webdriver, CDP, headless leaks)
-│   ├── cloak_launcher.py      # CloakBrowser launcher with automatic Playwright fallback
-│   └── proxy_manager.py       # Advanced proxy manager with rotation, health-check & stats
-│
-├── creators/                  # Account creation strategies
-│   └── ...
-│
-├── identity/                  # Persona and identity generation
-│   └── ...
-│
-├── verification/              # Verification and authentication
-│   ├── __init__.py
-│   ├── sms_providers.py       # SMS API clients (5sim, sms-activate, textverified)
-│   ├── captcha_solver.py      # CAPTCHA solvers (CapSolver, 2Captcha, AntiCaptcha)
-│   ├── email_recovery.py      # Recovery email management and verification
-│   └── voice_verification.py  # Voice verification as SMS alternative
-│
-├── warming/                   # Account warming & reputation building
-│   ├── __init__.py
-│   ├── activity_simulator.py  # Gmail activity simulation (read, compose, organize)
-│   ├── google_services.py     # YouTube + Google Search warmup engines
-│   └── reputation_builder.py  # Sender score and trust reputation builder
-│
-├── api/                       # REST API and dashboard
-│   └── ...
-│
-├── output/                    # Output files (excluded from Git)
-│   ├── successful_accounts.json
-│   ├── failed_attempts.json
-│   └── metrics.json
-│
-├── credentials/               # Encrypted credentials (excluded from Git)
-│   ├── accounts.enc
-│   └── .vault.key
-│
-└── logs/                      # Runtime logs (excluded from Git)
-    └── gmail_factory_YYYYMMDD.log
-```
-
----
-
-## 📋 Requirements
-
-### System Requirements
-
-| Requirement | Minimum Version |
-|-------------|----------------|
-| **Python** | 3.9+ |
-| **Chrome** | 120+ (for `undetected-chromedriver`) |
-| **RAM** | 4 GB (8 GB recommended for Batch Mode) |
-| **OS** | Windows 10/11 · Linux · macOS |
-
-### Optional External Requirements
-
-- **CloakBrowser** — for maximum stealth performance
-- **SMS API Key** — from any supported provider
-- **CAPTCHA API Key** — CapSolver, 2Captcha, or AntiCaptcha
-- **Residential Proxies** — for optimal results
-
----
-
-## 🚀 Installation
-
-### Step 1 — Clone the repository
-```bash
-git clone https://github.com/ShadowHackrs/Gmail-infinity.git
-cd Gmail-infinity
-```
-
-### Step 2 — Create a virtual environment (recommended)
-```bash
-# Windows
-python -m venv venv
-venv\Scripts\activate
-
-# Linux / macOS
-python3 -m venv venv
-source venv/bin/activate
-```
-
-### Step 3 — Install dependencies
-```bash
-pip install -r requirements.txt
-```
-
-### Step 4 — Install Playwright browser
-```bash
-playwright install chromium
-```
-
-### Step 5 — Install CloakBrowser (recommended)
-```bash
-pip install "cloakbrowser>=0.3.15"
-
-# Full support with GeoIP auto-detection
-pip install "cloakbrowser[geoip]"
-```
-
-### Step 6 — Install SMS and CAPTCHA providers (optional)
-```bash
-# SMS providers
-pip install fivesim smsactivateru
-
-# CAPTCHA solvers
-pip install 2captcha-python anticaptchaofficial capsolver
-```
-
----
-
-## ⚙️ Configuration
-
-### Master Configuration File: `config/settings.yaml`
-
-```yaml
-# ===========================
-#  Gmail Infinity Factory 2026
-#  Master System Configuration
-# ===========================
-
-system:
-  max_concurrent_creations: 5   # Max parallel account creation workers
-  headless_mode: true           # Run browser headless (true = faster)
-  debug_mode: false             # Verbose debug logging
-
-verification:
-  sms:
-    primary_provider: "5sim"    # Primary SMS provider
-    5sim:
-      api_key: "YOUR_5SIM_API_KEY"
-    sms_activate:
-      api_key: "YOUR_SMS_ACTIVATE_API_KEY"
-  captcha:
-    provider: "capsolver"
-    capsolver:
-      api_key: "YOUR_CAPSOLVER_API_KEY"
-
-proxy:
-  provider: "residential_pool"  # residential / datacenter / mobile
-  rotation_interval: 1          # Rotate proxy after every X operations
-```
-
-### Proxy List: `config/proxies.txt` (Static Pool)
-
-```
-# Proxy format:
-# protocol://host:port
-# protocol://user:pass@host:port
-
-http://192.168.1.1:8080
-socks5://user:password@proxy.example.com:1080
-https://residential.proxy.com:3128
-```
-
-### KKOIP Dynamic Pool
-
-The static pool above is kept separate from the KKOIP dynamic residential pool.
-The existing `KOOIP_*` environment keys and `kooip` pool identifier are retained
-for compatibility. Correcting the display name does not change the existing
-gateway or authentication implementation; use your provider's actual gateway
-settings rather than assuming that the legacy default below is appropriate.
-Enable the dynamic pool via environment variables (credential gateway mode — no
-whitelist or API signing required):
-
-```bash
-KOOIP_ENABLED=True
-KOOIP_USER_ID=123456789          # provider user ID
-KOOIP_AUTH_NAME=abcdefg          # global security auth username
-KOOIP_AUTH_PASSWORD=abcdefg1234  # global security auth password
-KOOIP_COUNTRY=US                 # US / US_California / US_California_city_LosAngeles / global
-KOOIP_GATEWAY=gate.kookeey.info  # legacy default; replace with your provider's gateway
-KOOIP_GATEWAY_PORT=1000
-KOOIP_SESSION_POOL_SIZE=10       # number of sticky sessions in the pool
-KOOIP_STICKY_SESSION=True        # False = rotate exit IP on every request
-KOOIP_ROTATE_INTERVAL=           # "" (none) / 5m / 1h auto-rotation per session
-PROXY_POOL_PREFERENCE=auto       # auto / static / kooip
-```
-
-Unhealthy KKOIP sessions are automatically replaced with fresh ones; static
-proxies are blacklisted as before.
-
-### Setting Up API Keys
-
-Open `config/settings.yaml` and enter your keys in the appropriate sections:
-- **5sim.net** → `verification.sms.5sim.api_key`
-- **CapSolver** → `verification.captcha.capsolver.api_key`
-
----
-
-## 🖥️ Usage
-
-### Basic Launch (Web)
-```bash
-python auto_gmail_creator.py
-```
-
-Open `http://127.0.0.1:8080` in a browser and sign in using the configured
-administrator password. Set `--host` and `--port` when needed.
-
-### Recommended Workflow
-
-1. Open **System Configuration** and **Proxy Management** to prepare settings.
-2. Use **Tools & Services** for configuration validation and optional data migration.
-3. Start an authorized task from **Create Accounts**.
-4. Follow progress, results and cancellation controls in **Tasks & Logs**.
-5. Use **Account Management** for health checks, warming and exports.
-6. Use **Tools & Services** to inspect, resume or clear an interrupted serial batch.
-7. Log out when finished. Logging out does not stop server-side tasks.
-
----
-
-## 🔧 Module Descriptions
-
-### `core/` — Stealth Engine
-
-| File | Description |
-|------|-------------|
-| `stealth_browser.py` | Full stealth browser framework — integrates CloakBrowser and Playwright with JavaScript injection to bypass all detection |
-| `behavior_engine.py` | Human behavior simulation — Bézier curve mouse movement, randomized typing, natural scroll patterns |
-| `fingerprint_generator.py` | Fingerprint generator — User-Agent, Screen resolution, GPU, AudioContext, and Font fingerprints |
-| `detection_evasion.py` | Detection bypass layer — fixes `navigator.webdriver`, CDP artifacts, and headless browser leaks |
-| `cloak_launcher.py` | CloakBrowser launcher with seamless automatic fallback to Playwright |
-| `proxy_manager.py` | Advanced proxy manager with rotation, health-checking, per-proxy statistics, and auto-blacklisting |
-
-### `verification/` — Verification Layer
-
-| File | Description |
-|------|-------------|
-| `sms_providers.py` | Full API clients for 5sim, sms-activate, and TextVerified |
-| `captcha_solver.py` | CAPTCHA solving via CapSolver, 2Captcha, and AntiCaptcha |
-| `email_recovery.py` | Recovery email management and verification flow |
-| `voice_verification.py` | Voice-based phone verification as an alternative to SMS |
-
-### `warming/` — Account Warming
-
-| File | Description |
-|------|-------------|
-| `activity_simulator.py` | Full Gmail activity simulation — reading, composing, and organizing emails |
-| `google_services.py` | YouTube watch session and Google Search simulation engines |
-| `reputation_builder.py` | Sender score and account trust reputation builder |
-
----
-
-## 📡 Supported Providers
-
-### SMS Providers
-
-| Provider | URL | Notes |
-|----------|-----|-------|
-| 5sim.net | https://5sim.net | **Recommended** — highest success rate |
-| sms-activate | https://sms-activate.ru | Reliable — large number pool |
-| TextVerified | https://textverified.com | Real US phone numbers |
-
-### CAPTCHA Solvers
-
-| Provider | URL | Notes |
-|----------|-----|-------|
-| CapSolver | https://capsolver.com | **Recommended** — supports reCAPTCHA v3 |
-| 2Captcha | https://2captcha.com | Reliable and fast |
-| AntiCaptcha | https://anti-captcha.com | Good alternative |
-
----
-
+### 常见问题
+
+| 情况 | 检查方式 |
+| --- | --- |
+| 提示虚拟环境不存在 | 先执行相应环境的 `./start.sh dev --setup` 或 `./start.sh prod --setup` |
+| 提示管理员密码未设置或过短 | 检查所选环境的 `.env`，密码至少 16 个字符 |
+| 本机 HTTP 登录后仍无法进入 | 检查 `WEB_COOKIE_SECURE` 是否为 `false`，并确认访问了正确的环境和端口 |
+| 提示已有 Web 服务使用任务目录 | 同一运行环境只能启动一个实例；先处理已有实例，不要直接删除锁文件 |
+| 端口被占用 | 用 `--port` 选择其他端口，或停止对应的服务 |
+| 开发模式不能绑定外网地址 | 开发模式限定本机访问；远程部署使用正式模式并配置 HTTPS |
+| 浏览器启动失败 | 检查 Playwright 浏览器、Chrome / 驱动、系统库及图形环境 |
+| 配置或资源无法保存 | 检查是否有运行中的业务任务、是否被环境变量覆盖，以及路径是否位于当前环境目录内 |
+| 断点文件无法读取 | 先备份文件，再通过「工具与服务」清除断点 |
+| 显示已配置但服务调用失败 | 检查任务日志中的网络、认证、余额和供应商响应 |
+
+<a id="legal"></a>
 ## ⚠️ Legal Disclaimer
 
 > **Important — Read before using**
@@ -691,26 +456,3 @@ This project was created strictly for **security research** and **technical test
 ║                                                              ║
 ╚══════════════════════════════════════════════════════════════╝
 ```
-## 🎥 Demo Video
-
-[![Watch Demo](https://img.youtube.com/vi/Ovz5KMg086k/maxresdefault.jpg)](https://www.youtube.com/watch?v=Ovz5KMg086k)
-
----
-
-## 🌐 Official Website
-
-🔗 https://www.shadowhackr.com/2026/04/gmail-2026.html
-
----
-
-<div align="center">
-**© 2026 Shadow Hacker - All Rights Reserved**
-
-[Website](https://www.shadowhackr.com) • [Facebook](https://www.facebook.com/ShadowHackr) • 
-**Built with ❤️ and ☕ by Shadow**
-
-*"Stealth is an art. Automation is a science. We combine both."*
-
-[![GitHub](https://img.shields.io/badge/GitHub-ShadowHacker0-black?logo=github)](https://github.com/ShadowHackrs)
-
-</div>
