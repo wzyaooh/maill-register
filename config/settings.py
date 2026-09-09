@@ -2,8 +2,9 @@ import os
 import logging
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
-load_dotenv()
+# Workers receive the complete selected configuration from their parent.
+if os.getenv("GMAIL_CONFIG_FROM_ENV") != "1":
+    load_dotenv()
 
 logger = logging.getLogger('gmail_creator_config')
 

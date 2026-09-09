@@ -81,3 +81,4 @@ Thumbs.db
 data/database.db
 data/web/
 .env-web-*
+runtime/

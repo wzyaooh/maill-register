@@ -55,7 +55,74 @@
 > `config/settings.yaml`, CloakBrowser and SecureVault are not implementations
 > in this checkout.
 
-### Install and launch
+### Development and production scripts
+
+The recommended macOS/Linux launcher is `start.sh`. It explicitly selects an
+environment and never installs or updates dependencies during a normal start.
+Run setup once for each environment you need:
+
+```bash
+./start.sh dev --setup
+./start.sh prod --setup
+```
+
+Setup creates independent virtual environments, installs the existing
+`requirements.txt` dependencies and Chromium, and prepares local configuration.
+Use `PYTHON=/path/to/python3.11 ./start.sh dev --setup` to choose the bootstrap
+interpreter. Python 3.10+ is recommended (minimum 3.9). On Linux, Playwright may
+also require system libraries; install those separately with the appropriate
+administrator permissions.
+
+Set a different, strong `WEB_ADMIN_PASSWORD` (at least 16 characters) in each
+environment's configuration file before starting:
+
+| | Development | Production |
+| --- | --- | --- |
+| Start | `./start.sh dev` | `./start.sh prod` |
+| Default address | `http://127.0.0.1:8081` | `http://127.0.0.1:8080` |
+| Server | Flask development server | Waitress |
+| Python environment | `venv/dev/` | `venv/prod/` |
+| Configuration | `runtime/dev/.env` | `runtime/prod/.env` |
+| Accounts, resources and tasks | `runtime/dev/` | `runtime/prod/` |
+| Browser default | Headed | Headless |
+| Server logging | DEBUG | INFO |
+
+Inside each runtime directory, accounts live in `data/database.db`, task
+records/logs in `data/web/`, server logs in `data/web/server.log`, and proxies in
+`config/proxies.txt`. The Web UI identifies the selected environment, and its
+login cookies are isolated as well. Configurable file paths cannot point outside
+the selected environment.
+
+Only the names and User-Agent seed resources are copied during initialization.
+Existing root/worktree passwords, proxies, accounts, cookies and task records
+are **not** imported automatically. Re-running setup preserves environment files
+and data. Back up and migrate any existing runtime data explicitly before using
+it in production. Runtime directories and virtual environments are Git-ignored.
+
+Development mode only accepts loopback bind addresses. Templates reload on
+change, but Python code changes require a restart: automatic process reload is
+disabled so it cannot silently interrupt browser tasks. The interactive debugger
+is disabled. Production does not use Flask's development server or debugger.
+
+```bash
+# Optional port override
+./start.sh dev --port 8082
+
+# Production behind a protected HTTPS reverse proxy
+./start.sh prod --host 0.0.0.0 --port 8080
+```
+
+For HTTPS deployments, set `WEB_COOKIE_SECURE=true` in the production environment
+file. Keep the default loopback binding unless remote access is deliberately
+configured. Use separate provider credentials and external Appium/voice service
+deployments as needed: runtime isolation does not provision separate physical
+devices or change those services' existing ports.
+
+Both scripts run in the foreground; stop with `Ctrl+C`. Use a process manager
+such as systemd or launchd for a persistent production deployment. `--setup`
+only prepares the environment; it does not start a server.
+
+### Existing direct Python entry point
 
 Use Python 3.10+ for a new installation and an isolated environment:
 
@@ -88,6 +155,16 @@ commands but is no longer required. Waitress is used instead of Flask's
 development server, and the launcher resolves the project directory automatically.
 Background creation and resume operations live in `core/creation_flow.py`;
 `core/progress.py` only provides non-interactive task progress and output.
+
+Direct Python launch without `--env` retains the original root `.env` and
+`data/` layout for compatibility. It does not use either isolated environment.
+After installing dependencies in a chosen Python environment, the equivalent
+isolated commands (also available on Windows) are:
+
+```bash
+python auto_gmail_creator.py --env dev
+python auto_gmail_creator.py --env prod
+```
 
 For remote access, put the Web service behind an **HTTPS reverse proxy** or an
 encrypted tunnel. With HTTPS, set `WEB_COOKIE_SECURE=true` before starting.

@@ -190,7 +190,10 @@ class TaskManager:
             env.update(self.configuration.values())
             env.update({"PYTHONUNBUFFERED": "1", "PYTHONDONTWRITEBYTECODE": "1",
                         "WEB_TASK_DIRECTORY": str(self.store.directory.resolve()),
-                        "WEB_PARENT_PID": str(os.getpid())})
+                        "WEB_PARENT_PID": str(os.getpid()),
+                        "GMAIL_CONFIG_FROM_ENV": "1"})
+            code_root = str(Path(__file__).resolve().parents[1])
+            env["PYTHONPATH"] = os.pathsep.join(filter(None, (code_root, env.get("PYTHONPATH", ""))))
             if params.get("engine"):
                 env["ENGINE_MODE"] = params["engine"]
             if action == "voice":

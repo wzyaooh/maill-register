@@ -78,18 +78,31 @@ def configuration_schema(source):
 
 
 class Configuration:
-    def __init__(self, root, environment=None):
+    def __init__(self, root, environment=None, code_root=None):
         self.root = Path(root).resolve()
+        self.code_root = Path(code_root).resolve() if code_root else self.root
+        self.isolated = self.root != self.code_root
         self.path = self.root / ".env"
-        self.schema = configuration_schema((self.root / "config/settings.py").read_text(encoding="utf-8"))
+        self.schema = configuration_schema((self.code_root / "config/settings.py").read_text(encoding="utf-8"))
         self.environment = dict(os.environ if environment is None else environment)
         self.lock = threading.RLock()
 
     def values(self):
         with self.lock:
             local = dotenv_values(self.path, interpolate=False) if self.path.exists() else {}
-        return {key: str(self.environment.get(key, local.get(key, field["default"]) or ""))
-                for key, field in self.schema.items()}
+        values = {key: str(self.environment.get(key, local.get(key, field["default"]) or ""))
+                  for key, field in self.schema.items()}
+        self.validate_paths(values)
+        return values
+
+    def validate_paths(self, values):
+        if not self.isolated:
+            return
+        for key, value in values.items():
+            if key.endswith("_FILE"):
+                path = (self.root / value).resolve()
+                if self.root not in path.parents:
+                    raise ValueError(key + " must stay inside the selected environment directory")
 
     def fields(self):
         values = self.values()
@@ -142,6 +155,7 @@ class Configuration:
                 if key == resource_key:
                     self._resource_path(value)
             clean[key] = value
+        self.validate_paths(clean)
         with self.lock:
             fd, temp = tempfile.mkstemp(dir=self.root, prefix=".env-web-")
             try:

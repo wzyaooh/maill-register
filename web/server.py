@@ -1,8 +1,14 @@
 """Web launcher shared by the primary script and python -m web."""
 import argparse
 import atexit
+import logging
 import os
 from pathlib import Path
+
+from web.runtime import MODES, prepare_environment
+
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def lock_server(root):
@@ -28,13 +34,20 @@ def lock_server(root):
 def main():
     parser = argparse.ArgumentParser(description="Gmail Creator authenticated Web interface")
     parser.add_argument("--web", action="store_true", help="Compatibility flag; Web is now the default")
+    parser.add_argument("--env", choices=MODES, help="Use an isolated dev or prod configuration and data directory")
     parser.add_argument("--host", default="127.0.0.1", help="Bind address (use 0.0.0.0 for remote access)")
-    parser.add_argument("--port", type=int, default=8080, help="HTTP port (default: 8080)")
+    parser.add_argument("--port", type=int, help="HTTP port (default: dev 8081, prod/legacy 8080)")
     args = parser.parse_args()
-    if not 1 <= args.port <= 65535:
+    port = args.port if args.port is not None else (8081 if args.env == "dev" else 8080)
+    if not 1 <= port <= 65535:
         parser.error("port must be between 1 and 65535")
-    root = Path(__file__).resolve().parents[1]
-    os.chdir(root)
+    if args.env == "dev" and args.host not in ("127.0.0.1", "localhost", "::1"):
+        parser.error("Development mode must bind to a loopback address")
+    try:
+        root = prepare_environment(args.env, ROOT) if args.env else ROOT
+    except (OSError, ValueError) as exc:
+        parser.exit(1, f"Unable to prepare environment: {exc}\n")
+    os.chdir(ROOT)
     try:
         from waitress import serve
         from web.app import create_app
@@ -42,17 +55,45 @@ def main():
         parser.exit(1, f"Missing Web dependency: {exc}. Install requirements.txt in your virtual environment.\n")
     try:
         server_lock = lock_server(root)
-        app = create_app()
     except ValueError as exc:
         parser.exit(1, str(exc) + "\n")
-    manager = app.extensions["web_tasks"]
-    atexit.register(manager.close)
-    print(f"Web interface listening on http://{args.host}:{args.port}", flush=True)
-    print("Remote access must use HTTPS (TLS reverse proxy) or a trusted encrypted tunnel.", flush=True)
+    manager = None
+    handlers = []
+    logger = logging.getLogger()
+    old_level = logger.level
     try:
-        serve(app, host=args.host, port=args.port, threads=8)
+        try:
+            app = create_app(root=root, code_root=ROOT, deployment=args.env) if args.env else create_app()
+        except ValueError as exc:
+            parser.exit(1, f"{exc}\nConfiguration file: {root / '.env'}\n")
+        manager = app.extensions["web_tasks"]
+        atexit.register(manager.close)
+        if args.env:
+            if not logger.handlers:
+                handlers.append(logging.StreamHandler())
+            handlers.append(logging.FileHandler(root / "data/web/server.log", encoding="utf-8"))
+            formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+            for handler in handlers:
+                handler.setFormatter(formatter)
+                logger.addHandler(handler)
+            logger.setLevel(logging.DEBUG if args.env == "dev" else logging.INFO)
+        print(f"Environment: {args.env or 'legacy'} | Data directory: {root / 'data'}", flush=True)
+        print(f"Web interface listening on http://{args.host}:{port}", flush=True)
+        print("Remote access must use HTTPS (TLS reverse proxy) or a trusted encrypted tunnel.", flush=True)
+        if args.env == "dev":
+            app.config["TEMPLATES_AUTO_RELOAD"] = True
+            # Automatic process reload would interrupt supervised browser tasks.
+            app.run(host=args.host, port=port, debug=True, use_reloader=False,
+                    use_debugger=False, load_dotenv=False)
+        else:
+            serve(app, host=args.host, port=port, threads=8)
     finally:
-        manager.close()
+        if manager is not None:
+            manager.close()
+        for handler in handlers:
+            logger.removeHandler(handler)
+            handler.close()
+        logger.setLevel(old_level)
         server_lock.close()
 
 

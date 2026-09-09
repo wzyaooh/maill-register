@@ -44,6 +44,7 @@
         <span class="breadcrumb-root">工作空间</span><span class="breadcrumb-divider" aria-hidden="true">/</span><span id="breadcrumb-page">总览</span>
       </div>
       <div class="topbar-actions">
+        {% if deployment %}<span class="badge {{ 'warning' if deployment == 'dev' else 'success' }}">{{ '开发环境' if deployment == 'dev' else '正式环境' }}</span>{% endif %}
         <span id="connection-status" class="connection-status" role="status"><span class="status-dot" aria-hidden="true"></span><span id="connection-text">正在连接</span></span>
         <button id="refresh-button" class="button quiet small" type="button">刷新状态</button>
         <span class="admin-avatar" title="管理员" aria-label="管理员">管</span>

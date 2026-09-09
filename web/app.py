@@ -44,9 +44,13 @@ def redact(value, sensitive):
     return value
 
 
-def create_app(root=None, password=None, secret_key=None, environment=None):
+def create_app(root=None, password=None, secret_key=None, environment=None, code_root=None, deployment=None):
+    if deployment not in (None, "dev", "prod"):
+        raise ValueError("Environment must be dev or prod")
     root = Path(root or ROOT).resolve()
-    configuration = Configuration(root, environment)
+    configuration = Configuration(root, environment, code_root=code_root)
+    if configuration.isolated:
+        configuration.values()
     local = {}
     if configuration.path.exists():
         from dotenv import dotenv_values
@@ -57,8 +61,9 @@ def create_app(root=None, password=None, secret_key=None, environment=None):
         raise ValueError("Set WEB_ADMIN_PASSWORD to a unique password of at least 16 characters")
     app = Flask(__name__)
     app.config.update(
-        SECRET_KEY=secret_key or env.get("WEB_SECRET_KEY") or secrets.token_hex(32),
-        SESSION_COOKIE_NAME="gmail_web_session",
+        SECRET_KEY=secret_key or env.get("WEB_SECRET_KEY") or local.get("WEB_SECRET_KEY") or secrets.token_hex(32),
+        SESSION_COOKIE_NAME=f"gmail_web_{deployment}" if deployment else "gmail_web_session",
+        DEPLOYMENT=deployment,
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Strict",
         SESSION_COOKIE_SECURE=(env.get("WEB_COOKIE_SECURE", local.get("WEB_COOKIE_SECURE", "false")).lower() == "true"),
@@ -116,7 +121,10 @@ def create_app(root=None, password=None, secret_key=None, environment=None):
     def protect():
         if request.endpoint == "static":
             return None
-        if request.endpoint != "login" and not session.get("authenticated"):
+        authenticated = session.get("authenticated") and (
+            deployment is None or session.get("deployment") == deployment
+        )
+        if request.endpoint != "login" and not authenticated:
             if request.path.startswith("/api/"):
                 return jsonify(error="Authentication required"), 401
             return redirect(url_for("login"))
@@ -181,10 +189,11 @@ def create_app(root=None, password=None, secret_key=None, environment=None):
             if error is None:
                 session.clear()
                 session["authenticated"] = True
+                session["deployment"] = deployment
                 session.permanent = True
                 csrf_token()
                 return redirect(url_for("index"))
-        return render_template("login.html", csrf_token=csrf_token(), error=error), status
+        return render_template("login.html", csrf_token=csrf_token(), error=error, deployment=deployment), status
 
     @app.post("/logout")
     def logout():
@@ -193,7 +202,7 @@ def create_app(root=None, password=None, secret_key=None, environment=None):
 
     @app.get("/")
     def index():
-        return render_template("index.html", csrf_token=csrf_token())
+        return render_template("index.html", csrf_token=csrf_token(), deployment=deployment)
 
     @app.get("/api/overview")
     def overview():
@@ -225,7 +234,7 @@ def create_app(root=None, password=None, secret_key=None, environment=None):
                 appium_available = True
         except OSError:
             appium_available = False
-        return jsonify(python=sys.version.split()[0], dependencies=dependencies,
+        return jsonify(python=sys.version.split()[0], dependencies=dependencies, environment=deployment or "legacy",
                        appium_available=appium_available,
                        voice_running=any(t["action"] == "voice" for t in tasks.store.active()),
                        notes=[

@@ -28,7 +28,7 @@
     </section>
     <section class="login-form-panel" aria-labelledby="login-title">
       <div class="login-form-content">
-        <span class="pill">安全管理入口</span>
+        <span class="pill">安全管理入口{% if deployment %} · {{ '开发环境' if deployment == 'dev' else '正式环境' }}{% endif %}</span>
         <h2 id="login-title">欢迎回来</h2>
         <p class="muted">使用服务器配置的管理员密码登录。</p>
         {% if error %}
