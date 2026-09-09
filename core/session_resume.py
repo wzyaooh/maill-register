@@ -4,6 +4,7 @@ Session Resume - Save and restore interrupted batch creation sessions
 import os
 import json
 import logging
+import tempfile
 from datetime import datetime
 
 logger = logging.getLogger('gmail_creator_session')
@@ -23,9 +24,16 @@ class SessionManager:
             "completed_indices": completed_indices,
             "results": results,
         }
-        os.makedirs(os.path.dirname(self.filepath), exist_ok=True)
-        with open(self.filepath, "w", encoding="utf-8") as f:
-            json.dump(state, f, indent=2, ensure_ascii=False)
+        directory = os.path.dirname(self.filepath) or "."
+        os.makedirs(directory, exist_ok=True)
+        fd, temporary = tempfile.mkstemp(dir=directory, prefix=".session-")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(state, f, indent=2, ensure_ascii=False)
+            os.replace(temporary, self.filepath)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
         logger.info(f"Session saved: {len(completed_indices)} completed")
 
     def load_state(self):
@@ -35,6 +43,7 @@ class SessionManager:
         try:
             with open(self.filepath, "r", encoding="utf-8") as f:
                 state = json.load(f)
+            self.validate_state(state)
             logger.info(f"Session loaded from {state.get('saved_at', 'unknown')}")
             return state
         except Exception as e:
@@ -53,11 +62,32 @@ class SessionManager:
 
     def get_remaining(self, state):
         """Get list of remaining account indices to create."""
-        if not state:
+        if state is None:
             return []
+        self.validate_state(state)
         total = state["batch_config"].get("num_accounts", 0)
         completed = set(state.get("completed_indices", []))
         return [i for i in range(total) if i not in completed]
+
+    @staticmethod
+    def validate_state(state):
+        if not isinstance(state, dict) or not isinstance(state.get("batch_config"), dict):
+            raise ValueError("Invalid saved session: batch_config must be an object")
+        total = state["batch_config"].get("num_accounts")
+        if type(total) is not int or not 0 <= total <= 100:
+            raise ValueError("Invalid saved session: num_accounts must be between 0 and 100")
+        completed = state.get("completed_indices", [])
+        if (not isinstance(completed, list)
+                or any(type(index) is not int or not 0 <= index < total for index in completed)
+                or len(set(completed)) != len(completed)):
+            raise ValueError("Invalid saved session: completed_indices contains invalid indexes")
+        results = state.get("results", {})
+        if not isinstance(results, dict):
+            raise ValueError("Invalid saved session: results must be an object")
+        for key in ("successes", "failures"):
+            value = results.get(key, 0)
+            if type(value) is not int or not 0 <= value <= total:
+                raise ValueError("Invalid saved session: invalid result counts")
 
 
 session_manager = SessionManager()

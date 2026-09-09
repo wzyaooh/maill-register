@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>管理员登录 · Gmail Creator</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body class="login-page">
+  <main class="login-shell">
+    <section class="login-intro" aria-labelledby="welcome-title">
+      <a class="brand" href="{{ url_for('login') }}" aria-label="Gmail Creator 管理控制台">
+        <span class="brand-mark" aria-hidden="true">G<span>+</span></span>
+        <span>Gmail Creator<small>管理控制台</small></span>
+      </a>
+      <div class="login-story">
+        <p class="eyebrow">YOUR WORKSPACE, CONNECTED</p>
+        <h1 id="welcome-title">所有流程，<br>一个工作台。</h1>
+        <p>创建、管理、监控。让每一次操作都有进度，<br class="desktop-only">让每一个结果都有记录。</p>
+        <ul class="login-features">
+          <li><span aria-hidden="true">01</span> 多引擎与多模式任务</li>
+          <li><span aria-hidden="true">02</span> 实时日志与可恢复会话</li>
+          <li><span aria-hidden="true">03</span> 统一配置与账号管理</li>
+        </ul>
+      </div>
+      <p class="login-footnote">自托管 · 管理员专用 · 无外部前端依赖</p>
+    </section>
+    <section class="login-form-panel" aria-labelledby="login-title">
+      <div class="login-form-content">
+        <span class="pill">安全管理入口</span>
+        <h2 id="login-title">欢迎回来</h2>
+        <p class="muted">使用服务器配置的管理员密码登录。</p>
+        {% if error %}
+        <div class="notice danger" role="alert">
+          <strong>登录未成功</strong>
+          <p>{{ error }}</p>
+        </div>
+        {% endif %}
+        <form action="{{ url_for('login') }}" method="post" class="login-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <div class="field">
+            <label for="password">管理员密码</label>
+            <input id="password" name="password" type="password" autocomplete="current-password" required autofocus aria-describedby="password-help">
+            <p id="password-help" class="field-help">密码由服务器的 WEB_ADMIN_PASSWORD 配置，不是 Gmail 账号密码。</p>
+          </div>
+          <button class="button primary large full-width" type="submit">登录控制台 <span aria-hidden="true">→</span></button>
+        </form>
+        <div class="login-security">
+          <span class="security-icon" aria-hidden="true">◇</span>
+          <p><strong>远程访问请使用 HTTPS</strong><br>请勿在不可信网络中通过明文 HTTP 输入密码。登录仅供受信任的管理员使用。</p>
+        </div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

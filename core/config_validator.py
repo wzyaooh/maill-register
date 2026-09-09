@@ -99,11 +99,11 @@ def validate_config():
                 static_lines = [l.strip() for l in f if l.strip() and not l.startswith("#")]
         if not static_lines and not kooip_enabled:
             if not os.path.exists(proxy_file):
-                warnings.append(f"ENABLE_PROXY=True but proxy file '{proxy_file}' not found and KooIP is disabled")
+                warnings.append(f"ENABLE_PROXY=True but proxy file '{proxy_file}' not found and KKOIP is disabled")
             else:
-                warnings.append(f"Proxy file '{proxy_file}' is empty and KooIP is disabled")
+                warnings.append(f"Proxy file '{proxy_file}' is empty and KKOIP is disabled")
 
-    # KooIP dynamic pool
+    # KKOIP dynamic pool
     if kooip_enabled:
         missing = [name for name, val in [
             ("KOOIP_USER_ID", getattr(Config, 'KOOIP_USER_ID', '')),
@@ -136,22 +136,3 @@ def validate_config():
         warnings.append("TELEGRAM_CHAT_ID set but TELEGRAM_BOT_TOKEN missing")
 
     return warnings, errors
-
-
-def print_validation_report(console, theme):
-    """Print a formatted validation report to console."""
-    warnings, errors = validate_config()
-
-    if not warnings and not errors:
-        console.print(f"[{theme['success']}]> Config validation: All OK[/]")
-        return True
-
-    if errors:
-        for err in errors:
-            console.print(f"[{theme['error']}]> ERROR: {err}[/]")
-
-    if warnings:
-        for warn in warnings:
-            console.print(f"[{theme['warning']}]> WARNING: {warn}[/]")
-
-    return len(errors) == 0

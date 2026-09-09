@@ -14,8 +14,6 @@
  ██║     ██║  ██║╚██████╗   ██║   ╚██████╔╝██║  ██║   ██║       ███████╗╚██████╔╝███████╗╚██████╔╝
  ╚═╝     ╚═╝  ╚═╝ ╚═════╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝   ╚═╝       ╚══════╝ ╚═════╝ ╚══════╝ ╚═════╝
 ```
-![Gmail Creator Pro Interface](sc.png)
-
 # 🏭 Gmail Infinity Factory 2026
 
 **The most powerful and stealthiest Gmail account automation engine of 2026**
@@ -33,6 +31,7 @@
 
 ## 📖 Table of Contents
 
+- [Web interface](#web-interface)
 - [Overview](#-overview)
 - [Key Features](#-key-features)
 - [Project Structure](#-project-structure)
@@ -40,11 +39,178 @@
 - [Installation](#-installation)
 - [Configuration](#-configuration)
 - [Usage](#-usage)
-- [TUI Interactive Menu](#-tui-interactive-menu)
 - [Module Descriptions](#-module-descriptions)
 - [Supported Providers](#-supported-providers)
 - [Legal Disclaimer](#-legal-disclaimer)
 - [Copyright](#-copyright)
+
+---
+
+## Web interface
+
+> **Current source of truth:** the executable entry point is
+> `auto_gmail_creator.py`, configuration is loaded from `.env` by
+> `config/settings.py`, and account storage is SQLite. The older promotional
+> sections below describe a different layout/menu; `main.py`,
+> `config/settings.yaml`, CloakBrowser and SecureVault are not implementations
+> in this checkout.
+
+### Install and launch
+
+Use Python 3.10+ for a new installation and an isolated environment:
+
+```bash
+python3 -m venv venv
+source venv/bin/activate                 # Windows: venv\Scripts\activate
+python -m pip install -r requirements.txt
+python -m playwright install chromium
+```
+
+Set `WEB_ADMIN_PASSWORD` in the server environment or in a local `.env` file.
+Use a unique password of at least 16 characters; there is no default password,
+public registration, or unauthenticated setup endpoint. Never commit this file.
+The browser login only asks for this administrator password.
+
+```bash
+# Web interface, local access: http://127.0.0.1:8080
+python auto_gmail_creator.py
+
+# LAN/server access: http://SERVER_ADDRESS:8080
+python auto_gmail_creator.py --host 0.0.0.0 --port 8080
+
+# Equivalent module entry point
+python -m web --host 0.0.0.0 --port 8080
+```
+
+The application now starts the Web interface by default. The old interactive
+terminal menu has been removed; `--web` remains accepted for existing launch
+commands but is no longer required. Waitress is used instead of Flask's
+development server, and the launcher resolves the project directory automatically.
+Background creation and resume operations live in `core/creation_flow.py`;
+`core/progress.py` only provides non-interactive task progress and output.
+
+For remote access, put the Web service behind an **HTTPS reverse proxy** or an
+encrypted tunnel. With HTTPS, set `WEB_COOKIE_SECURE=true` before starting.
+Do not set this flag for plain HTTP local testing, because browsers will then
+refuse to send the session cookie. Do not expose the HTTP port directly to the
+public Internet; use firewall restrictions. Proxy headers are deliberately not
+trusted, so login throttling behind a proxy is shared by its source IP.
+
+Sessions expire after eight hours and, by default, after a server restart.
+An optional strong `WEB_SECRET_KEY` makes sessions survive restarts; keep it
+secret. Changing the administrator password should be accompanied by rotating
+that key if it was explicitly configured.
+
+### Feature coverage
+
+| Existing capability | Web operation |
+| --- | --- |
+| Ghost / Premium account creation | Creation page: standard flow, SMS on/off |
+| YouTube / Workspace flow | Creation page: flow selector |
+| Playwright / Selenium / Appium | Creation page: engine selector |
+| Serial multi-account tasks | Creation page: quantity and warmup duration |
+| Previously standalone threaded batch runner | Creation page: parallel switch, 1–5 workers |
+| Dashboard, strategies, batch history | Overview page and structured task results |
+| Configuration overview | Shared configuration editor covering **every** `Config` environment field; proxy groups live in their dedicated menu |
+| Saved accounts | Search, select, reveal password explicitly |
+| CSV / JSON / TXT export | Authenticated download, with plaintext-credential warning |
+| Network and proxy checks | Proxy page: background test and result/log view |
+| Static proxy import | Dedicated Proxy Management page: paste text, import UTF-8 TXT (append/replace), preview and save |
+| Names, user agents | Resource text editors with validation |
+| KKOIP dynamic proxy pool | Dedicated Proxy Management page: credentials, capacity, sticky sessions, rotation and pool preference |
+| Account health check | All accounts or selected accounts; persisted status updates |
+| Post-creation warming module | All/selected accounts, Playwright or Selenium |
+| Public proxy fetching | Background fetch/test/save to configured proxy file |
+| Telegram test | Connection test plus actual test-message delivery |
+| SMS balance helper | 5sim / SMS-Activate, the providers supported by the existing helper |
+| Startup configuration validation | Tools/settings: background validation report |
+| Old account-data migration | Tools: explicit migration into SQLite |
+| Interrupted serial batch | Tools: inspect, resume, or clear saved state |
+| Voice OTP server | Tools: start and stop, task log and status |
+| Ending a browser session | Web logout; server shutdown remains a deployment operation |
+
+All tasks have persistent history, progress, logs, structured results and a stop
+operation. Completed task status means the operation returned, **not** that every
+account succeeded: inspect successes/failures and validation errors in its result.
+Only one automation/maintenance task may run at a time, with one optional voice
+service alongside it. Parallel creation runs its workers inside that one task.
+There is no arbitrary shell command execution API.
+
+### Configuration and data behavior
+
+- Open **Proxy Management** (`#proxies`) for static proxies, KKOIP and proxy
+  selection settings. These fields share the settings editor and validation API
+  with the general configuration page, without duplicate controls. Saving or
+  reloading one page preserves unsaved configuration drafts on the other page.
+- TXT import stages content in the proxy editor; it does not overwrite the
+  server file until **Save proxy file** is clicked. Files must be UTF-8 and the
+  combined content must not exceed 1 MiB. The preview table hides credentials.
+- Proxy cards show the last read/saved static count and configured dynamic
+  session capacity, not live exit IPs. Health counts come from the latest
+  completed proxy check in retained task history and are explicitly marked as
+  a historical snapshot. Run another check after changing the configuration.
+- The settings page edits `.env` atomically. Environment variables set by the
+  deployment take precedence and are shown read-only.
+- Passwords and API tokens are never returned by the settings API. An untouched
+  secret is preserved; explicit clearing removes it. New tasks receive a fresh
+  configuration snapshot without restarting the Web server.
+- Configuration, resources and saved sessions cannot be changed while a business
+  task is active. A running voice service retains its startup configuration until
+  it is restarted.
+- Resource editors only access `.txt` files under `config/` and `data/`.
+  Proxy syntax matches the current engines: `host:port` or `host:port:user:pass`,
+  one proxy per line; comment lines start with `#`.
+- Existing accounts are read from `data/database.db`; use the migration operation
+  to import legacy `data/accounts.json` / `data/accounts.txt`. Migration is an
+  explicit Web operation, not a startup side effect.
+- Task state and logs live under `data/web/`, excluded from Git. Browser-visible
+  logs/results redact configured secrets and stored account passwords. Raw worker
+  logs and account exports **can contain credentials**: protect the server files,
+  backups and downloaded exports. SQLite is not encrypted by this change.
+- CSV cells that could be interpreted as spreadsheet formulas receive a leading
+  apostrophe. Use JSON or TXT when exact unmodified credential values are needed.
+- The launcher prevents a second Web server from using the same project's
+  task store.
+- Serial tasks checkpoint after each completed account. Repeated resume preserves
+  earlier counts and indexes. The in-progress account is not checkpointed until
+  its attempt finishes. Parallel batches do **not** currently support resume;
+  stopping one preserves already stored accounts but discards unfinished work.
+- Stop sends a termination signal, allowing cleanup, then forcefully terminates
+  the worker process group after ten seconds if necessary on POSIX systems.
+  Workers also stop when their Web parent disappears. Windows termination cannot
+  guarantee cleanup of browser grandchildren; check external processes there.
+
+### External services and inherited limitations
+
+- Appium requires an independently started server at `127.0.0.1:4723` and a
+  connected Android device/emulator. Its existing creation flow is incomplete
+  and does not persist a verified account; the Web UI does not claim otherwise.
+  Parallel Appium jobs are rejected.
+- Playwright needs installed browser binaries. Headed mode on a server requires
+  a graphical session/display; configure `HEADLESS_MODE` appropriately.
+- The optional voice worker requires `VOICE_SERVER_TOKEN` and binds only to
+  `127.0.0.1:5000` when launched from Web. Publish `/voice` separately through an
+  authenticated HTTPS reverse proxy if your telephony provider needs a webhook.
+  Both `/voice` and `/otp` require the configured token via `X-Voice-Token` or
+  the `token` query parameter. Header authentication is preferred.
+  Audio conversion also requires FFmpeg. The main creation engines do not
+  currently consume the voice OTP API automatically.
+- Configuration switches reflect existing code; exposing them does not implement
+  previously unused flags or make every engine support every setting. In
+  particular, the user-selected warmup duration belongs to the Selenium path;
+  Playwright has its own existing pre/post-warming timing.
+- A configured API key or an open Appium port is not a successful connectivity
+  test. Use the available check operations and inspect their results.
+- Use automation only where authorized and comply with provider terms.
+
+### Validation
+
+The regression tests use the Python standard-library test runner. They do not
+create real accounts, make paid SMS requests, or contact Telegram:
+
+```bash
+python -m unittest discover -s tests -p 'test_web*.py' -v
+```
 
 ---
 
@@ -54,7 +220,7 @@
 
 The project is written entirely in **Python 3.9+** and ships with:
 
-- A professional interactive TUI built on `rich` + `colorama`
+- An authenticated Web dashboard with background tasks and live logs
 - AES-128 encrypted credential storage via **SecureVault**
 - Intelligent proxy rotation with automated health-checking
 - A fully integrated synthetic human identity generator
@@ -119,7 +285,8 @@ The project is written entirely in **Python 3.9+** and ships with:
 ```
 gmail_infinity_factory_2026/
 │
-├── main.py                    # Entry point — TUI application (3,292 lines)
+├── auto_gmail_creator.py       # Entry point — authenticated Web server
+├── web/                       # Web pages, API, authentication and task workers
 ├── requirements.txt           # Python dependencies
 ├── .gitignore                 # Git exclusions
 │
@@ -130,6 +297,8 @@ gmail_infinity_factory_2026/
 │
 ├── core/                      # Core stealth engine
 │   ├── __init__.py
+│   ├── creation_flow.py        # Shared non-interactive creation and resume flow
+│   ├── progress.py             # Background task progress and log output
 │   ├── stealth_browser.py     # Stealth browser framework (CloakBrowser + Playwright)
 │   ├── behavior_engine.py     # Human behavior simulation (Mouse, Keyboard, Scroll)
 │   ├── fingerprint_generator.py  # Fingerprint generator (UA, Screen, GPU, Audio, Font)
@@ -286,19 +455,23 @@ socks5://user:password@proxy.example.com:1080
 https://residential.proxy.com:3128
 ```
 
-### KooIP Dynamic Pool (kookeey)
+### KKOIP Dynamic Pool
 
-The static pool above is kept separate from the KooIP dynamic residential pool.
+The static pool above is kept separate from the KKOIP dynamic residential pool.
+The existing `KOOIP_*` environment keys and `kooip` pool identifier are retained
+for compatibility. Correcting the display name does not change the existing
+gateway or authentication implementation; use your provider's actual gateway
+settings rather than assuming that the legacy default below is appropriate.
 Enable the dynamic pool via environment variables (credential gateway mode — no
 whitelist or API signing required):
 
 ```bash
 KOOIP_ENABLED=True
-KOOIP_USER_ID=123456789          # kookeey user ID
+KOOIP_USER_ID=123456789          # provider user ID
 KOOIP_AUTH_NAME=abcdefg          # global security auth username
 KOOIP_AUTH_PASSWORD=abcdefg1234  # global security auth password
 KOOIP_COUNTRY=US                 # US / US_California / US_California_city_LosAngeles / global
-KOOIP_GATEWAY=gate.kookeey.info  # or gate-hk / gate-us / gate-eu / gate-sea ...
+KOOIP_GATEWAY=gate.kookeey.info  # legacy default; replace with your provider's gateway
 KOOIP_GATEWAY_PORT=1000
 KOOIP_SESSION_POOL_SIZE=10       # number of sticky sessions in the pool
 KOOIP_STICKY_SESSION=True        # False = rotate exit IP on every request
@@ -306,7 +479,7 @@ KOOIP_ROTATE_INTERVAL=           # "" (none) / 5m / 1h auto-rotation per session
 PROXY_POOL_PREFERENCE=auto       # auto / static / kooip
 ```
 
-Unhealthy KooIP sessions are automatically replaced with fresh ones; static
+Unhealthy KKOIP sessions are automatically replaced with fresh ones; static
 proxies are blacklisted as before.
 
 ### Setting Up API Keys
@@ -319,184 +492,23 @@ Open `config/settings.yaml` and enter your keys in the appropriate sections:
 
 ## 🖥️ Usage
 
-### Basic Launch (Interactive TUI)
+### Basic Launch (Web)
 ```bash
 python auto_gmail_creator.py
 ```
 
-The application will open an interactive TUI in your terminal.
+Open `http://127.0.0.1:8080` in a browser and sign in using the configured
+administrator password. Set `--host` and `--port` when needed.
 
 ### Recommended Workflow
-```
-1. Launch the app     →  python main.py
-2. Select [6]         →  Test and configure proxies first
-3. Select [1]         →  Create one free account to validate setup
-4. Select [2]         →  Create one Premium account with SMS verification
-5. Select [3]         →  Create a batch of accounts
-6. Select [5]         →  Warm up all created accounts
-7. Select [8]         →  View and export accounts to CSV
-8. Select [0]         →  Exit and save everything
-```
 
----
-
-## 📟 TUI Interactive Menu
-
-When the application starts, the following menu is displayed:
-
-```
-╔══════════════════════════════════════════════════════════╗
-║           GMAIL  INFINITY  FACTORY  2026                  ║
-║                  v2026.1.0  |  by Shadow                  ║
-╠══════════════════════════════════════════════════════════╣
-║  [1]  SINGLE_FREE     →  Create one account (no SMS)      ║
-║  [2]  SINGLE_PREMIUM  →  Create one account (with SMS)    ║
-║  [3]  BATCH_CREATE    →  Create a batch of accounts       ║
-║  [4]  CONTINUOUS      →  Auto-create until target count   ║
-║  [5]  ACCOUNT_WARM    →  Warm up created accounts         ║
-║  [6]  PROXY_MANAGER   →  Test and manage proxies          ║
-║  [7]  DASHBOARD       →  Live session statistics          ║
-║  [8]  SAVED_ACCOUNTS  →  View and export accounts         ║
-║  [9]  CONFIGURATION   →  Settings and API keys            ║
-║  [0]  EXIT            →  Shutdown and save everything     ║
-╚══════════════════════════════════════════════════════════╝
-```
-
----
-
-### `[1]` SINGLE FREE — Create one account without SMS
-
-Creates a single Gmail account without phone verification.  
-Uses a randomly selected fingerprint and an auto-generated human persona.  
-Best for validating your proxy and browser setup.
-
-**Input:** None — starts immediately  
-**Output:** JSON record appended to `output/successful_accounts.json`
-
----
-
-### `[2]` SINGLE PREMIUM — Create one account with SMS verification
-
-Creates a single Gmail account with real SMS phone verification.  
-Connects to your configured SMS provider API to rent a real phone number.  
-Highest success rate and lowest likelihood of account suspension.
-
-**Input:** SMS provider selection  
-**Output:** JSON record + encrypted credentials in `credentials/accounts.enc`
-
----
-
-### `[3]` BATCH CREATE — Create multiple accounts
-
-Creates several accounts sequentially with human-like delays (30–60 seconds between each).  
-Automatically rotates proxies and fingerprints between every creation cycle.  
-Displays a live progress bar.
-
-**Inputs:**
-- Number of accounts to create
-- Use SMS verification? (y/n)
-
-**Output:** Incremental JSON saves after each successful account
-
----
-
-### `[4]` CONTINUOUS — Run until target is reached
-
-Runs in an infinite loop until the specified account target is met.  
-Operates in batches of 5 accounts with 2–5 minute cooldowns between batches.  
-Automatically re-runs proxy health checks when the healthy pool drops low.  
-Can be stopped at any time with `Ctrl+C`.
-
-**Inputs:**
-- Target account count
-- Use SMS verification? (y/n)
-
----
-
-### `[5]` ACCOUNT WARMING — Warm up accounts
-
-Loads all created accounts and opens a stealth browser session for each one.  
-Performs realistic activities to build account trust and sender reputation.
-
-**Warming options:**
-
-| Option | Description |
-|--------|-------------|
-| `a` | Gmail Activity — read emails, compose drafts, apply labels |
-| `b` | Google Services — YouTube watch, Google Search, Drive browsing |
-| `c` | Reputation — sender score signals, engagement metrics |
-| `d` | **Full Sequence — all of the above (recommended)** ✅ |
-
----
-
-### `[6]` PROXY MANAGER — Manage and test proxies
-
-Displays comprehensive stats for all loaded proxies.  
-Runs a full health check against Google with a single keystroke.  
-Lists currently healthy and blacklisted proxies.
-
-**Displayed information:**
-- Total proxies loaded
-- Healthy / blacklisted counts
-- Top 10 healthy proxies
-
----
-
-### `[7]` DASHBOARD — Live session statistics
-
-Displays a real-time statistics panel for the current session.
-
-```
-Total Attempts    →  Total creation attempts made
-Successful        →  Successfully created accounts
-Failed            →  Failed attempts
-Phone Verified    →  Accounts verified via SMS
-CAPTCHA Solved    →  CAPTCHAs solved automatically
-Proxy Errors      →  Proxy-related failures
-Success Rate      →  Overall success percentage
-Elapsed Time      →  Current session runtime
-Healthy Proxies   →  Currently available healthy proxies
-Fingerprints      →  Total fingerprints loaded
-```
-
----
-
-### `[8]` SAVED ACCOUNTS — View and export accounts
-
-Displays the last 10 accounts in a formatted table.  
-Supports exporting all accounts to a CSV file.  
-Aggregates data from the current session, saved JSON files, and the encrypted vault.
-
-**Table columns:**
-```
-# | Email | Password | Full Name | Created At
-```
-
-**CSV export path:**
-```
-output/accounts_YYYYMMDD_HHMMSS.csv
-```
-
----
-
-### `[9]` CONFIGURATION — Settings overview
-
-Full display of all file paths, engine settings, and API key status.  
-Highlights any unconfigured API keys that are required for full functionality.
-
-**Displays:**
-- File paths: Settings / Proxies / Fingerprints / Output
-- Resources: proxy count, fingerprint count
-- Engine settings: Headless Mode, Max Concurrent, SMS/CAPTCHA Provider
-- API key status (partially masked for security)
-
----
-
-### `[0]` EXIT — Safe shutdown
-
-Saves all created accounts before exiting.  
-Writes a final metrics file with session statistics.  
-Displays a closing summary.
+1. Open **System Configuration** and **Proxy Management** to prepare settings.
+2. Use **Tools & Services** for configuration validation and optional data migration.
+3. Start an authorized task from **Create Accounts**.
+4. Follow progress, results and cancellation controls in **Tasks & Logs**.
+5. Use **Account Management** for health checks, warming and exports.
+6. Use **Tools & Services** to inspect, resume or clear an interrupted serial batch.
+7. Log out when finished. Logging out does not stop server-side tasks.
 
 ---
 

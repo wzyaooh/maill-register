@@ -79,3 +79,5 @@ Thumbs.db
 
 # Runtime database
 data/database.db
+data/web/
+.env-web-*

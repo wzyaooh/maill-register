@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="csrf-token" content="{{ csrf_token }}">
+  <title>概览 · Gmail Creator</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <script src="{{ url_for('static', filename='app.js') }}" defer></script>
+</head>
+<body class="console-page">
+  <a href="#main-content" class="skip-link">跳到主要内容</a>
+  <button id="nav-backdrop" class="nav-backdrop" type="button" aria-label="关闭导航" hidden></button>
+  <aside id="sidebar" class="sidebar" aria-label="主导航">
+    <a class="brand" href="#overview">
+      <span class="brand-mark" aria-hidden="true">G<span>+</span></span>
+      <span>Gmail Creator<small>管理控制台</small></span>
+    </a>
+    <p class="nav-caption">工作空间</p>
+    <nav class="main-nav" aria-label="工作空间">
+      <a href="#overview" data-page="overview" class="nav-link active" aria-current="page"><span class="nav-icon" aria-hidden="true">◫</span>总览</a>
+      <a href="#create" data-page="create" class="nav-link"><span class="nav-icon" aria-hidden="true">＋</span>创建账号</a>
+      <a href="#tasks" data-page="tasks" class="nav-link"><span class="nav-icon" aria-hidden="true">≋</span>任务与日志<span id="nav-task-count" class="nav-count" hidden>0</span></a>
+      <a href="#accounts" data-page="accounts" class="nav-link"><span class="nav-icon" aria-hidden="true">▤</span>账号管理</a>
+      <a href="#proxies" data-page="proxies" class="nav-link"><span class="nav-icon" aria-hidden="true">⇄</span>代理管理</a>
+      <a href="#resources" data-page="resources" class="nav-link"><span class="nav-icon" aria-hidden="true">⇄</span>资源管理</a>
+      <a href="#settings" data-page="settings" class="nav-link"><span class="nav-icon" aria-hidden="true">⚙</span>系统配置</a>
+      <a href="#tools" data-page="tools" class="nav-link"><span class="nav-icon" aria-hidden="true">⌘</span>工具与服务</a>
+    </nav>
+    <div class="sidebar-bottom">
+      <div class="sidebar-note"><span class="status-dot" aria-hidden="true"></span><div>私有管理工作空间<small>任务在服务器端执行</small></div></div>
+      <form action="{{ url_for('logout') }}" method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button class="logout-button" type="submit"><span aria-hidden="true">↗</span>退出登录</button>
+      </form>
+      <p class="sidebar-hint">退出登录不会停止运行中的任务</p>
+    </div>
+  </aside>
+  <div class="workspace">
+    <header class="topbar">
+      <div class="topbar-location">
+        <button id="nav-toggle" class="icon-button mobile-menu" type="button" aria-controls="sidebar" aria-expanded="false" aria-label="打开导航">☰</button>
+        <span class="breadcrumb-root">工作空间</span><span class="breadcrumb-divider" aria-hidden="true">/</span><span id="breadcrumb-page">总览</span>
+      </div>
+      <div class="topbar-actions">
+        <span id="connection-status" class="connection-status" role="status"><span class="status-dot" aria-hidden="true"></span><span id="connection-text">正在连接</span></span>
+        <button id="refresh-button" class="button quiet small" type="button">刷新状态</button>
+        <span class="admin-avatar" title="管理员" aria-label="管理员">管</span>
+      </div>
+    </header>
+    <main id="main-content" class="main-content" tabindex="-1">
+      <noscript><div class="notice danger">控制台需要启用 JavaScript 才能加载任务和管理配置。登录与退出仍可正常使用。</div></noscript>
+      <div id="connection-error" class="notice warning" role="status" hidden></div>
+
+      <section id="page-overview" class="page" aria-labelledby="overview-title">
+        <div class="page-heading"><div><p class="eyebrow">WORKSPACE OVERVIEW</p><h1 id="overview-title">总览</h1><p>工作空间的每一个动态，一目了然。</p></div><a href="#create" class="button primary">＋ 创建新任务</a></div>
+        <div class="stats-grid">
+          <article class="stat-card"><div class="stat-label">账号总数<span class="stat-icon blue" aria-hidden="true">▤</span></div><strong id="stat-total">—</strong><p>已保存至账号数据库</p></article>
+          <article class="stat-card"><div class="stat-label">可用账号<span class="stat-icon green" aria-hidden="true">✓</span></div><strong id="stat-active">—</strong><p>当前状态为 active</p></article>
+          <article class="stat-card"><div class="stat-label">可用比例<span class="stat-icon purple" aria-hidden="true">↗</span></div><strong id="stat-rate">—</strong><p>可用账号 / 账号总数</p></article>
+          <article class="stat-card"><div class="stat-label">进行中任务<span class="stat-icon amber" aria-hidden="true">◷</span></div><strong id="stat-running">—</strong><p id="stat-running-note">包含持续运行的服务</p></article>
+        </div>
+        <div class="overview-grid">
+          <article class="card">
+            <div class="card-heading"><div><h2>任务动态</h2><p>最近任务与执行状态</p></div><a href="#tasks" class="text-link">查看全部 →</a></div>
+            <div id="overview-tasks" class="activity-list"><p class="empty-state">正在读取任务…</p></div>
+          </article>
+          <article class="card">
+            <div class="card-heading"><div><h2>服务配置</h2><p>密钥已配置，不代表服务已连通</p></div><a href="#tools" class="text-link">检测 →</a></div>
+            <div id="overview-services" class="service-list"><p class="empty-state">正在读取配置状态…</p></div>
+          </article>
+        </div>
+        <div class="two-column">
+          <article class="card"><div class="card-heading"><div><h2>策略分布</h2><p>已保存账号的创建策略</p></div><span id="engine-badge" class="pill">引擎读取中</span></div><div id="strategy-stats" class="distribution-list"></div></article>
+          <article class="card"><div class="card-heading"><div><h2>短信服务使用</h2><p>账号记录中的服务分布</p></div></div><div id="sms-stats" class="distribution-list"></div></article>
+        </div>
+        <article class="card">
+          <div class="card-heading"><div><h2>运行会话历史</h2><p>批次统计、策略与错误详情</p></div></div>
+          <div class="table-wrap"><table><caption class="sr-only">运行会话历史</caption><thead><tr><th scope="col">开始时间</th><th scope="col">尝试</th><th scope="col">成功</th><th scope="col">失败</th><th scope="col">耗时</th><th scope="col">详情</th></tr></thead><tbody id="session-history"><tr><td colspan="6" class="empty-state">正在加载…</td></tr></tbody></table></div>
+        </article>
+        <div class="notice subtle"><strong>运行提示</strong><p>控制台展示的是服务器状态。浏览器自动化、设备和代理均运行在服务器上；请仅管理您有权操作的账号，并遵守平台规则。</p></div>
+      </section>
+
+      <section id="page-create" class="page" aria-labelledby="create-title" hidden>
+        <div class="page-heading"><div><p class="eyebrow">NEW AUTOMATION</p><h1 id="create-title">创建账号</h1><p>选择流程与引擎，启动可追踪的后台任务。</p></div><a href="#tasks" class="button secondary">查看任务</a></div>
+        <form id="create-form">
+          <div class="creation-layout">
+            <div class="stack">
+              <article class="card">
+                <div class="card-heading"><div><h2><span class="step-number">1</span>选择创建模式</h2><p>四种入口，对应现有的完整操作流程</p></div></div>
+                <fieldset class="mode-fieldset"><legend class="sr-only">创建模式</legend><div class="mode-grid">
+                  <label class="mode-option"><input type="radio" name="creation_mode" value="ghost" checked><span class="mode-card"><span class="mode-symbol" aria-hidden="true">◌</span><strong>Ghost</strong><span>标准流程</span><small>标准创建，不启用短信 API</small></span></label>
+                  <label class="mode-option"><input type="radio" name="creation_mode" value="premium"><span class="mode-card"><span class="mode-symbol" aria-hidden="true">✧</span><strong>Premium</strong><span>短信增强</span><small>标准流程 + 已配置的短信服务</small></span></label>
+                  <label class="mode-option"><input type="radio" name="creation_mode" value="youtube"><span class="mode-card"><span class="mode-symbol" aria-hidden="true">▷</span><strong>YouTube</strong><span>视频平台入口</span><small>使用 YouTube 创建流程</small></span></label>
+                  <label class="mode-option"><input type="radio" name="creation_mode" value="workspace"><span class="mode-card"><span class="mode-symbol" aria-hidden="true">▦</span><strong>Workspace</strong><span>工作空间入口</span><small>使用 Workspace 创建流程</small></span></label>
+                </div></fieldset>
+              </article>
+              <article class="card">
+                <div class="card-heading"><div><h2><span class="step-number">2</span>运行参数</h2><p>默认引擎来自服务器配置，当前任务可单独覆盖</p></div></div>
+                <div class="form-grid">
+                  <div class="field"><label for="create-engine">自动化引擎</label><select id="create-engine" name="engine" required><option value="" selected disabled>正在读取默认引擎…</option><option value="playwright">Playwright · 桌面浏览器</option><option value="selenium">Selenium · 桌面浏览器</option><option value="appium">Appium · 移动设备（未完成）</option></select></div>
+                  <div class="field"><label for="create-count">创建数量</label><input id="create-count" name="num_accounts" type="number" value="1" min="1" max="100" step="1" required><p class="field-help">每批 1–100 个账号</p></div>
+                  <div class="field"><label for="create-warmup">注册前预热时长（分钟）</label><input id="create-warmup" name="warmup_minutes" type="number" value="5" min="0" max="60" step="1" required aria-describedby="create-warmup-help"><p id="create-warmup-help" class="field-help">仅 Selenium 非短信模式使用此预热时长；Playwright / Appium 不使用此参数。创建后的养号由会话预热配置控制，最多 60 分钟。</p></div>
+                  <div class="field"><label for="create-threads">最大并发线程</label><input id="create-threads" name="max_threads" type="number" value="3" min="1" max="5" step="1" required disabled><p class="field-help">启用并行后生效，范围 1–5</p></div>
+                </div>
+                <div class="option-row"><label class="check-label" for="create-sms"><input id="create-sms" name="use_sms_api" type="checkbox"><span>启用短信 API 验证<small>需先配置服务密钥；可能产生供应商费用</small></span></label><label class="check-label" for="create-parallel"><input id="create-parallel" name="parallel" type="checkbox" aria-describedby="parallel-warning"><span>并行创建<small>仅 Playwright / Selenium · 不支持断点恢复</small></span></label></div>
+                <div id="parallel-warning" class="notice warning" hidden><strong>并行批次不可恢复，且需要固定密码</strong><p>请先配置 YOUR_PASSWORD 或 config/password.txt，否则任务会失败。并行任务不保存可恢复断点；中断后请检查已保存的账号，再决定是否启动新批次。</p></div>
+                <div id="appium-warning" class="notice warning" hidden><strong>Appium 流程尚未完成</strong><p>需要在服务器外部启动 Appium 服务并连接设备。现有 Appium 路径不会保存创建的账号，且不支持并行创建。端口可达不代表设备就绪。</p></div>
+              </article>
+            </div>
+            <aside class="card creation-summary" aria-labelledby="creation-summary-title">
+              <span class="pill">执行前确认</span><h2 id="creation-summary-title">准备好开始了吗？</h2><p class="muted">任务会在后台执行，页面关闭后仍可回来查看进度。</p>
+              <dl class="summary-list"><div><dt>当前模式</dt><dd id="summary-mode">Ghost</dd></div><div><dt>运行引擎</dt><dd id="summary-engine">读取中</dd></div><div><dt>创建数量</dt><dd id="summary-count">1 个账号</dd></div><div><dt>执行方式</dt><dd id="summary-parallel">顺序执行</dd></div></dl>
+              <button id="create-submit" type="submit" class="button primary large full-width" disabled>启动创建任务 <span aria-hidden="true">→</span></button>
+              <p class="field-help">启动后自动进入实时日志。若存在未完成会话，请先到「工具与服务」恢复或清除。</p>
+              <a href="#settings" class="text-link">检查运行配置 →</a>
+            </aside>
+          </div>
+        </form>
+      </section>
+
+      <section id="page-tasks" class="page" aria-labelledby="tasks-title" hidden>
+        <div class="page-heading"><div><p class="eyebrow">ACTIVITY & LOGS</p><h1 id="tasks-title">任务与日志</h1><p>自动同步执行进度、日志与结果，每 3 秒刷新。</p></div><span id="task-count-label" class="pill">正在加载</span></div>
+        <div class="task-layout">
+          <article class="card task-history-card"><div class="card-heading"><h2>任务历史</h2><span class="live-label"><span class="status-dot" aria-hidden="true"></span>实时</span></div><div id="task-list" class="task-list"><p class="empty-state">正在读取任务…</p></div></article>
+          <article class="card task-detail-card">
+            <div id="task-empty" class="large-empty"><span aria-hidden="true">≋</span><h2>选择一个任务</h2><p>在左侧查看历史任务，或创建新的自动化任务。</p><a href="#create" class="button secondary">创建任务</a></div>
+            <div id="task-detail" hidden>
+              <div class="card-heading"><div><p id="task-id" class="eyebrow mono"></p><h2 id="task-title">任务详情</h2></div><div class="button-row"><span id="task-status" class="badge"></span><button id="task-cancel" type="button" class="button danger small" hidden>停止任务</button></div></div>
+              <p id="task-timing" class="field-help"></p>
+              <div class="task-progress"><div class="progress-heading"><span id="task-progress-message">等待进度</span><span id="task-progress-count"></span></div><progress id="task-progress-bar" max="1" value="0" aria-label="任务完成进度"></progress></div>
+              <div id="task-error" class="notice danger" role="alert" hidden></div>
+              <div class="log-toolbar"><h3>执行日志</h3><label class="check-label compact" for="log-follow"><input id="log-follow" type="checkbox" checked>跟随最新日志</label></div>
+              <pre id="task-logs" class="log-panel" tabindex="0" aria-label="任务执行日志">等待日志输出…</pre>
+              <p class="field-help">日志可能仅保留最近片段。自动脱敏并非绝对可靠，请勿向不可信对象分享日志。</p>
+              <details class="detail-box"><summary>任务参数</summary><pre id="task-params" class="json-panel"></pre></details>
+              <details class="detail-box" open><summary>结构化结果</summary><pre id="task-result" class="json-panel">任务尚未返回结果。</pre></details>
+              <div class="notice subtle task-result-notice"><strong>执行结束不等于全部成功</strong><p>「执行完成」仅表示任务执行结束。请检查结果中的 failures、errors 和逐项结果；串行创建与恢复任务的 retry_stats 字段提供重试统计。</p></div>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section id="page-accounts" class="page" aria-labelledby="accounts-title" hidden>
+        <div class="page-heading"><div><p class="eyebrow">ACCOUNT DIRECTORY</p><h1 id="accounts-title">账号管理</h1><p>检索、检测与养号，密码仅按需读取。</p></div><a href="#create" class="button primary">＋ 创建账号</a></div>
+        <article class="card">
+          <div class="account-toolbar">
+            <div class="field search-field"><label for="account-search">搜索账号</label><input id="account-search" type="search" placeholder="邮箱、姓名、策略或备注" autocomplete="off"></div>
+            <div class="field"><label for="account-status-filter">账号状态</label><select id="account-status-filter"><option value="">全部状态</option></select></div>
+            <div class="field"><label for="export-format">导出格式（全部账号）</label><select id="export-format"><option value="csv">CSV 表格</option><option value="json">JSON 数据</option><option value="txt">TXT 邮箱:密码</option></select></div>
+            <button id="account-export" class="button secondary" type="button">导出全部账号 ↓</button>
+          </div>
+          <div class="notice warning compact-notice"><p>导出文件包含<strong>明文密码</strong>，且始终导出全部账号，不受搜索或勾选影响。请妥善保管，勿公开分享。</p></div>
+          <div class="selection-toolbar"><span id="account-selection">尚未选择账号</span><div class="button-row"><button id="clear-selection" class="button quiet small" type="button" disabled>清除选择</button><button id="account-health" class="button secondary small" type="button">健康检测</button></div></div>
+          <div class="table-wrap"><table class="accounts-table"><caption class="sr-only">账号列表；未选择账号时，批量健康检测与养号会作用于全部账号</caption><thead><tr><th scope="col" class="checkbox-cell"><input id="select-all-accounts" type="checkbox" aria-label="选择当前筛选的所有账号"></th><th scope="col">账号 / 姓名</th><th scope="col">状态</th><th scope="col">策略</th><th scope="col">创建时间</th><th scope="col">密码</th><th scope="col">资料</th></tr></thead><tbody id="account-rows"><tr><td colspan="7" class="empty-state">正在加载账号…</td></tr></tbody></table></div>
+          <div id="account-count" class="table-footer">正在加载…</div>
+        </article>
+        <article class="card">
+          <div class="card-heading"><div><h2>账号养号</h2><p>对勾选的账号执行；未勾选时对全部账号执行，启动前会再次确认。</p></div><span class="pill">后台任务</span></div>
+          <form id="warm-form" class="inline-form"><div class="field"><label for="warm-engine">养号引擎</label><select id="warm-engine" required><option value="playwright">Playwright</option><option value="selenium">Selenium</option></select></div><div class="field"><label for="warm-duration">每个账号时长（分钟）</label><input id="warm-duration" type="number" min="1" max="60" step="1" value="3" required></div><button id="account-warm" class="button primary" type="submit">开始养号 →</button></form>
+        </article>
+      </section>
+
+      <section id="page-proxies" class="page" aria-labelledby="proxies-title" hidden>
+        <div class="page-heading"><div><p class="eyebrow">PROXY MANAGEMENT</p><h1 id="proxies-title">代理管理</h1><p>静态 IP、KKOIP 动态池与代理选择策略，集中管理。</p></div><button type="button" class="button primary" data-action="proxy_test">检测代理池</button></div>
+        <div class="stats-grid">
+          <article class="stat-card"><div class="stat-label">静态代理条目</div><strong id="proxy-static-count">—</strong><p>最近读取或保存的代理文件</p></article>
+          <article class="stat-card"><div class="stat-label">动态池配置容量</div><strong id="proxy-dynamic-count">—</strong><p id="proxy-dynamic-note">正在读取 KKOIP 配置…</p></article>
+          <article class="stat-card"><div class="stat-label">优先代理池</div><strong id="proxy-pool-choice">—</strong><p>已保存的池选择策略</p></article>
+          <article class="stat-card"><div class="stat-label">最近检测可用条目</div><strong id="proxy-health-count">—</strong><p>上次检测结果，不代表实时健康状态</p></article>
+        </div>
+        <article class="card">
+          <div class="card-heading"><div><h2>最近代理池检测</h2><p id="proxy-check-time">尚未执行代理检测</p></div><button id="proxy-check-detail" type="button" class="button quiet small" hidden>查看完整结果 →</button></div>
+          <div id="proxy-check-results" class="two-column"><p class="empty-state">点击「检测代理池」后查看静态池与动态池的健康统计。</p></div>
+          <p class="field-help">检测是历史快照，修改代理或配置后请重新检测。动态池容量表示会话数量，不是已确认的独立出口 IP 数量；每个任务会创建自己的池。</p>
+        </article>
+        <article class="card editor-card">
+          <div id="resource-proxies" class="resource-panel">
+            <div class="card-heading"><div><h2>静态代理 / 导入 IP</h2><p>粘贴文本，或选择本机 TXT 文件导入。</p></div><button type="button" class="button secondary small" data-action="proxy_fetch">获取免费代理</button></div>
+            <div class="inline-form proxy-import-controls"><div class="field"><label for="proxy-import-mode">文件导入方式</label><select id="proxy-import-mode"><option value="append">追加到编辑区</option><option value="replace">替换编辑区</option></select></div><div class="field"><label for="proxy-import-file">导入 TXT 文件（UTF-8，最多 1 MiB）</label><input id="proxy-import-file" type="file" accept=".txt,text/plain" disabled></div></div>
+            <form class="resource-form" data-kind="proxies"><div class="editor-heading"><div><label for="editor-proxies">代理文件内容</label><p id="path-proxies" class="field-help mono">正在读取路径…</p></div><span id="state-proxies" class="pill">未加载</span></div><div class="notice warning compact-notice"><p>代理条目可能包含用户名和密码，本编辑器显示原始明文。请勿截屏或公开分享。免费代理不可信，不建议用于敏感账号。</p></div><textarea id="editor-proxies" class="code-editor" rows="10" spellcheck="false" autocapitalize="off" autocomplete="off" aria-describedby="help-proxies" disabled></textarea><p id="help-proxies" class="field-help">每行 host:port 或 host:port:user:pass，# 开头为注释。文件导入只更新编辑区，点击「保存代理文件」后才生效。获取代理任务完成后请重新读取。</p><div class="editor-footer"><button type="button" class="button secondary" data-resource-reload="proxies">重新读取</button><button type="submit" class="button primary" data-resource-save="proxies" disabled>保存代理文件</button></div></form>
+            <details class="detail-box"><summary>静态代理列表预览（按编辑区内容，不表示已保存或已连通）</summary><div class="table-wrap"><table><thead><tr><th scope="col">#</th><th scope="col">地址</th><th scope="col">认证</th><th scope="col">格式</th></tr></thead><tbody id="proxy-entry-rows"></tbody></table></div><p id="proxy-entry-summary" class="field-help"></p></details>
+          </div>
+        </article>
+        <div class="page-heading"><div><h2>动态代理池与选池配置</h2><p>密钥留空保留原值，显式清空才会删除；环境变量覆盖的选项为只读。</p><p>KKOIP 沿用旧配置键 KOOIP_*，以兼容已保存的配置；网关与认证方式未因名称修正而变更。</p></div></div>
+        <form id="proxy-settings-form"><div id="proxy-settings-fields" class="settings-fields"><div class="card empty-state">正在加载代理配置…</div></div><div class="save-bar"><div><strong id="proxy-settings-dirty-count">尚未修改</strong><p>仅保存代理配置，不影响其他页面的未保存编辑</p></div><div class="button-row"><button id="proxy-settings-reload" type="button" class="button secondary">重新读取配置</button><button id="proxy-settings-save" type="submit" class="button primary" disabled>保存代理配置</button></div></div></form>
+      </section>
+
+      <section id="page-resources" class="page" aria-labelledby="resources-title" hidden>
+        <div class="page-heading"><div><p class="eyebrow">RESOURCE LIBRARY</p><h1 id="resources-title">资源管理</h1><p>维护姓名与 User-Agent 文件。代理已移至独立管理页面。</p></div><a href="#proxies" class="button secondary">代理管理 →</a></div>
+        <article class="card editor-card">
+          <div class="resource-tabs" role="tablist" aria-label="资源文件">
+            <button id="tab-names" class="resource-tab active" role="tab" aria-selected="true" aria-controls="resource-names" tabindex="0" type="button" data-resource-kind="names">姓名库</button>
+            <button id="tab-user_agents" class="resource-tab" role="tab" aria-selected="false" aria-controls="resource-user_agents" tabindex="-1" type="button" data-resource-kind="user_agents">User-Agent</button>
+          </div>
+          <div id="resource-names" class="resource-panel" role="tabpanel" aria-labelledby="tab-names">
+            <form class="resource-form" data-kind="names"><div class="editor-heading"><div><label for="editor-names">姓名库文件内容</label><p id="path-names" class="field-help mono">正在读取路径…</p></div><span id="state-names" class="pill">未加载</span></div><textarea id="editor-names" class="code-editor" rows="16" spellcheck="false" autocapitalize="off" aria-describedby="help-names" disabled></textarea><p id="help-names" class="field-help">每行一条姓名，保持现有文件格式。切换标签不会丢弃未保存的修改。</p><div class="editor-footer"><button type="button" class="button secondary" data-resource-reload="names">重新读取</button><button type="submit" class="button primary" data-resource-save="names" disabled>保存姓名库</button></div></form>
+          </div>
+          <div id="resource-user_agents" class="resource-panel" role="tabpanel" aria-labelledby="tab-user_agents" hidden>
+            <form class="resource-form" data-kind="user_agents"><div class="editor-heading"><div><label for="editor-user_agents">User-Agent 文件内容</label><p id="path-user_agents" class="field-help mono">正在读取路径…</p></div><span id="state-user_agents" class="pill">未加载</span></div><textarea id="editor-user_agents" class="code-editor" rows="16" spellcheck="false" autocapitalize="off" aria-describedby="help-user_agents" disabled></textarea><p id="help-user_agents" class="field-help">每行一个完整 User-Agent。保存后由后续任务读取。</p><div class="editor-footer"><button type="button" class="button secondary" data-resource-reload="user_agents">重新读取</button><button type="submit" class="button primary" data-resource-save="user_agents" disabled>保存 User-Agent</button></div></form>
+          </div>
+        </article>
+      </section>
+
+      <section id="page-settings" class="page" aria-labelledby="settings-title" hidden>
+        <div class="page-heading"><div><p class="eyebrow">CONFIGURATION</p><h1 id="settings-title">系统配置</h1><p>通用配置，按组管理。代理与 KKOIP 配置请前往<a href="#proxies" class="text-link">代理管理</a>。</p></div><button id="settings-validate" type="button" class="button secondary">校验已保存配置</button></div>
+        <div class="notice subtle"><strong>关于凭据与环境覆盖</strong><p>密钥不会回传到页面；留空保留原值，勾选「清空」才会删除。被服务器环境变量覆盖的字段为只读。运行中的任务可能阻止保存；校验使用已保存值，而非未保存的编辑。</p></div>
+        <div class="card settings-filters"><div class="field search-field"><label for="settings-search">搜索配置</label><input id="settings-search" type="search" placeholder="配置名称、变量名或分组" autocomplete="off"></div><div class="field"><label for="settings-group">配置分组</label><select id="settings-group"><option value="">全部分组</option></select></div><span id="settings-visible-count" class="muted"></span></div>
+        <form id="settings-form"><div id="settings-fields" class="settings-fields"><div class="card empty-state">正在加载完整配置…</div></div><p id="settings-no-match" class="empty-state" hidden>没有匹配的配置，请调整搜索条件。</p><div class="save-bar"><div><strong id="settings-dirty-count">尚未修改</strong><p>自动刷新不会覆盖您的编辑</p></div><div class="button-row"><button id="settings-reload" type="button" class="button secondary">重新读取</button><button id="settings-save" type="submit" class="button primary" disabled>保存配置</button></div></div></form>
+      </section>
+
+      <section id="page-tools" class="page" aria-labelledby="tools-title" hidden>
+        <div class="page-heading"><div><p class="eyebrow">SYSTEM & UTILITIES</p><h1 id="tools-title">工具与服务</h1><p>环境检查、服务操作与断点恢复，统一入口。</p></div><button id="system-refresh" type="button" class="button secondary">刷新环境状态</button></div>
+        <article class="card">
+          <div class="card-heading"><div><h2>服务器环境</h2><p>依赖可发现 ≠ 浏览器已安装 ≠ 外部服务已连通</p></div><span id="system-python" class="pill">Python —</span></div>
+          <div id="system-dependencies" class="dependency-grid"><p class="empty-state">正在检查环境…</p></div>
+          <div class="system-facts"><div><span>Appium 本地端口</span><strong id="system-appium">检查中</strong></div><div><span>语音服务任务</span><strong id="system-voice">检查中</strong></div></div>
+          <div class="notice warning"><strong>Appium 为现有未完成流程</strong><p>需外部运行 Appium 服务并连接真实设备 / 模拟器，不支持并行，也不会保存创建账号。即使端口可达，也不代表设备已连接或创建流程可完成。</p></div>
+          <details class="detail-box"><summary>服务器环境说明</summary><ul id="system-notes" class="notes-list"></ul></details>
+        </article>
+        <div class="tool-grid">
+          <article class="card tool-card"><span class="tool-symbol blue" aria-hidden="true">✓</span><h2>启动前自检</h2><p>校验当前保存的配置，查看警告与错误。检查结果显示在任务日志中。</p><button type="button" class="button secondary" data-action="validate">运行配置自检</button></article>
+          <article class="card tool-card"><span class="tool-symbol purple" aria-hidden="true">⇥</span><h2>数据迁移</h2><p>将旧格式账号数据导入当前数据库。操作会修改数据库，请先完成备份。</p><button type="button" class="button secondary" data-action="migrate">执行数据迁移</button></article>
+          <article class="card tool-card"><span class="tool-symbol blue" aria-hidden="true">↗</span><h2>Telegram 测试</h2><p>验证机器人连接并向已配置的聊天发送真实测试消息。</p><button type="button" class="button secondary" data-action="telegram_test">发送测试通知</button></article>
+          <article class="card tool-card"><span class="tool-symbol green" aria-hidden="true">＄</span><h2>短信服务余额</h2><p>查询现有实现支持的供应商余额，实际连接结果以任务输出为准。</p><button type="button" class="button secondary" data-action="sms_balance">查询余额</button></article>
+        </div>
+        <div class="two-column">
+          <article class="card">
+            <div class="card-heading"><div><h2>语音验证码服务</h2><p>作为持续运行任务管理</p></div><span id="voice-status" class="badge neutral">检查中</span></div>
+            <div class="notice warning"><strong>独立服务 · 仅监听 localhost:5000</strong><p>启动前必须设置非空的 VOICE_SERVER_TOKEN，且不能使用 changeme。服务不使用控制台登录 Cookie，现有注册流程也不会调用该服务。如需远程使用，请通过受保护的 HTTPS 反向代理访问，避免暴露音频与验证码。</p></div>
+            <p class="muted">启动后持续运行，退出控制台不会自动停止。「停止服务」会取消对应语音任务，也可在任务页停止。运行状态不保证网络端口已就绪。</p>
+            <div class="button-row"><button id="voice-start" type="button" class="button primary" disabled>启动语音服务</button><button id="voice-stop" type="button" class="button danger" disabled>停止服务</button><a href="#settings" class="text-link">配置服务 →</a></div>
+          </article>
+          <article class="card">
+            <div class="card-heading"><div><h2>未完成会话</h2><p>从服务器保存的断点继续执行</p></div><span id="saved-session-badge" class="pill">检查中</span></div>
+            <p id="saved-session-summary" class="muted">正在读取会话状态…</p>
+            <details class="detail-box"><summary>查看保存的会话数据</summary><pre id="saved-session-json" class="json-panel">正在加载…</pre></details>
+            <div class="button-row session-buttons"><button id="session-resume" type="button" class="button primary" disabled>恢复执行 →</button><button id="session-clear" type="button" class="button danger" disabled>清除断点</button></div>
+            <p class="field-help">仅串行批次支持恢复，并行批次不可恢复。恢复使用保存的批次参数。清除只删除恢复状态，不删除已创建账号；此操作不可撤销。</p>
+          </article>
+        </div>
+      </section>
+      <footer class="workspace-footer"><span>Gmail Creator · 自托管管理控制台</span><span id="last-sync">等待首次同步</span></footer>
+    </main>
+  </div>
+  <div id="toast-region" class="toast-region" aria-label="操作通知"></div>
+</body>
+</html>

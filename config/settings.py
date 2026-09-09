@@ -73,11 +73,11 @@ class Config:
     MOBILE_PROXY_IP_CHANGE_URL = os.getenv("MOBILE_PROXY_IP_CHANGE_URL", "")
     PROXY_CHANGE_WAIT_TIME = int(os.getenv("PROXY_CHANGE_WAIT_TIME", "10"))
 
-    # Pool selection: "auto" (both pools), "static" (proxies.txt only), "kooip" (KooIP dynamic only)
+    # Pool selection: "auto" (both pools), "static" (proxies.txt only), "kooip" (KKOIP dynamic only)
     PROXY_POOL_PREFERENCE = os.getenv("PROXY_POOL_PREFERENCE", "auto")
 
     # ═══════════════════════════════════════════════════════════════
-    #                  KOOIP (KOOKEEY) DYNAMIC POOL
+    #                  KKOIP DYNAMIC POOL (LEGACY KOOIP_* KEYS)
     # ═══════════════════════════════════════════════════════════════
     # Credential gateway mode: proxies are built as
     #   {USER_ID}-{AUTH_NAME}:{AUTH_PASSWORD}-{COUNTRY}[-{session}][-{interval}]@{GATEWAY}:{PORT}

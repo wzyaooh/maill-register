@@ -8,6 +8,7 @@ import time
 import threading
 from queue import Queue
 import logging
+import hmac
 from config.settings import Config
 
 # Configure logging
@@ -19,6 +20,13 @@ app = Flask(__name__)
 # OTP Queue
 otp_queue = Queue()
 
+@app.before_request
+def authenticate():
+    if Config.VOICE_SERVER_TOKEN and Config.VOICE_SERVER_TOKEN != "changeme":
+        token = request.headers.get("X-Voice-Token") or request.args.get("token", "")
+        if not hmac.compare_digest(token.encode(), Config.VOICE_SERVER_TOKEN.encode()):
+            return "Unauthorized", 401
+
 # Directories
 TEMP_DIR = "temp_audio"
 os.makedirs(TEMP_DIR, exist_ok=True)
@@ -29,13 +37,6 @@ def receive_call():
     Webhook for Twilio/Telnyx to send call recording.
     Expects 'RecordingUrl' in form data.
     """
-    # Security check (if configured)
-    token = request.args.get('token')
-    if Config.VOICE_SERVER_TOKEN and Config.VOICE_SERVER_TOKEN != "changeme":
-        if token != Config.VOICE_SERVER_TOKEN:
-             logger.warning("Unauthorized access attempt to voice server")
-             return "Unauthorized", 401
-
     try:
         # Twilio sends RecordingUrl
         audio_url = request.form.get('RecordingUrl')
@@ -102,7 +103,7 @@ def run_server():
     from waitress import serve
     port = 5000
     logger.info(f"[*] Voice OTP Server listening on port {port} (waitress)")
-    serve(app, host='0.0.0.0', port=port, threads=4)
+    serve(app, host=os.getenv("VOICE_SERVER_HOST", "0.0.0.0"), port=port, threads=4)
 
 if __name__ == "__main__":
     run_server()

@@ -3,7 +3,7 @@ Proxy Manager - Advanced proxy rotation and health checking
 
 Maintains two separate pools:
   - static: manually imported proxies from Config.PROXY_FILE (proxies.txt)
-  - kooip:  KooIP (kookeey) dynamic residential pool via credential gateway mode
+  - kooip:  KKOIP dynamic residential pool (legacy pool identifier)
 """
 import os
 import time
@@ -49,7 +49,7 @@ class ProxyManager:
         if not getattr(Config, 'KOOIP_ENABLED', False):
             return
         if not (Config.KOOIP_USER_ID and Config.KOOIP_AUTH_NAME and Config.KOOIP_AUTH_PASSWORD):
-            logger.warning("KOOIP_ENABLED=True but KooIP credentials are incomplete — dynamic pool disabled")
+            logger.warning("KOOIP_ENABLED=True but KKOIP credentials are incomplete — dynamic pool disabled")
             return
         if Config.KOOIP_STICKY_SESSION:
             pool_size = max(1, Config.KOOIP_SESSION_POOL_SIZE)
@@ -59,7 +59,7 @@ class ProxyManager:
             # Without a session the gateway rotates the exit IP on every request,
             # so a single pool entry is sufficient
             self._register(self._build_kooip_proxy(None), SOURCE_KOOIP)
-        logger.info(f"KooIP dynamic pool ready: {len(self._kooip_proxies)} gateway session(s)")
+        logger.info(f"KKOIP dynamic pool ready: {len(self._kooip_proxies)} gateway session(s)")
 
     def _register(self, proxy, source):
         pool = self._static_proxies if source == SOURCE_STATIC else self._kooip_proxies
@@ -76,7 +76,7 @@ class ProxyManager:
     def _build_kooip_proxy(session):
         """Build a gateway proxy in internal host:port:user:pass format.
 
-        KooIP credential mode:
+        KKOIP credential mode:
         {uid}-{authname}:{authpwd}-{country}[-{session}][-{interval}]@{gateway}:{port}
         """
         user = f"{Config.KOOIP_USER_ID}-{Config.KOOIP_AUTH_NAME}"
@@ -89,7 +89,7 @@ class ProxyManager:
         return f"{Config.KOOIP_GATEWAY}:{Config.KOOIP_GATEWAY_PORT}:{user}:{password}"
 
     def _replace_kooip_session(self, proxy):
-        """Swap a dead KooIP sticky session for a fresh one."""
+        """Swap a dead KKOIP sticky session for a fresh one."""
         if not Config.KOOIP_STICKY_SESSION:
             return None
         try:
@@ -104,11 +104,11 @@ class ProxyManager:
         self._sources[new_proxy] = SOURCE_KOOIP
         self._health[new_proxy] = True
         self._scores[new_proxy] = 50
-        logger.info("KooIP session replaced with a fresh one")
+        logger.info("KKOIP session replaced with a fresh one")
         return new_proxy
 
     def refresh_kooip_pool(self):
-        """Drop all KooIP sessions and generate a brand-new set."""
+        """Drop all KKOIP sessions and generate a brand-new set."""
         for proxy in self._kooip_proxies:
             self._sources.pop(proxy, None)
             self._health.pop(proxy, None)
@@ -191,7 +191,7 @@ class ProxyManager:
             if self._scores[proxy] <= 10:
                 self._health[proxy] = False
                 logger.warning(f"Proxy marked unhealthy ({self._sources.get(proxy, '?')}): {proxy}")
-                # Dead KooIP sessions are cheap to replace — rotate in a new one
+                # Dead KKOIP sessions are cheap to replace — rotate in a new one
                 if self._sources.get(proxy) == SOURCE_KOOIP:
                     self._replace_kooip_session(proxy)
 
