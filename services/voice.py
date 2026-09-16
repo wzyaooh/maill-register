@@ -10,6 +10,7 @@ from queue import Queue
 import logging
 import hmac
 from config.settings import Config
+from core.secret_safety import redact_text
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -22,10 +23,23 @@ otp_queue = Queue()
 
 @app.before_request
 def authenticate():
-    if Config.VOICE_SERVER_TOKEN and Config.VOICE_SERVER_TOKEN != "changeme":
-        token = request.headers.get("X-Voice-Token") or request.args.get("token", "")
-        if not hmac.compare_digest(token.encode(), Config.VOICE_SERVER_TOKEN.encode()):
-            return "Unauthorized", 401
+    configured = getattr(Config, "VOICE_SERVER_TOKEN", "")
+    configured = configured.strip() if isinstance(configured, str) else ""
+    # An absent or stock token must never turn authentication into an open
+    # endpoint.  This check intentionally happens before reading request data.
+    if not configured or configured.lower() == "changeme":
+        return "Unauthorized", 401
+    token = request.headers.get("X-Voice-Token") or request.args.get("token", "")
+    if not isinstance(token, str):
+        return "Unauthorized", 401
+    try:
+        matches = hmac.compare_digest(
+            token.encode("utf-8"), configured.encode("utf-8")
+        )
+    except UnicodeError:
+        matches = False
+    if not matches:
+        return "Unauthorized", 401
 
 # Directories
 TEMP_DIR = "temp_audio"
@@ -43,7 +57,7 @@ def receive_call():
         if not audio_url:
             return "No recording URL", 400
 
-        logger.info(f"[+] Received call recording: {audio_url}")
+        logger.info("[+] Received call recording: %s", redact_text(audio_url))
         
         # Download audio
         audio_response = requests.get(audio_url + ".mp3") # Twilio usually provides .mp3 extension
@@ -64,7 +78,7 @@ def receive_call():
         with sr.AudioFile(local_wav) as source:
             audio_data = recognizer.record(source)
             text = recognizer.recognize_google(audio_data)
-            logger.info(f"[+] Transcription: {text}")
+            logger.info("[+] Transcription completed (%d characters)", len(text or ""))
             
         # Extract 6-digit code
         clean_text = text.replace(" ", "")
@@ -72,7 +86,7 @@ def receive_call():
         
         if code_match:
             code = code_match.group(1)
-            logger.info(f"[+] OTP FLAGGED: {code}")
+            logger.info("[+] OTP received and queued")
             otp_queue.put({"code": code, "timestamp": time.time()})
             
             # Cleanup
@@ -88,8 +102,8 @@ def receive_call():
             return "No OTP found", 200
             
     except Exception as e:
-        logger.error(f"[-] Error processing call: {e}")
-        return str(e), 500
+        logger.error("[-] Error processing call: %s", type(e).__name__)
+        return "Voice processing failed", 500
 
 @app.route("/otp", methods=['GET'])
 def get_otp():
@@ -103,7 +117,8 @@ def run_server():
     from waitress import serve
     port = 5000
     logger.info(f"[*] Voice OTP Server listening on port {port} (waitress)")
-    serve(app, host=os.getenv("VOICE_SERVER_HOST", "0.0.0.0"), port=port, threads=4)
+    host = os.getenv("VOICE_SERVER_HOST", "").strip() or "127.0.0.1"
+    serve(app, host=host, port=port, threads=4)
 
 if __name__ == "__main__":
     run_server()

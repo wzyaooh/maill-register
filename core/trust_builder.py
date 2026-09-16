@@ -55,7 +55,10 @@ def network_trust_check():
         info_resp = requests.get(f"https://ipinfo.io/{ip}/json", timeout=5)
         info = info_resp.json()
         is_datacenter = "hosting" in str(info.get("org", "")).lower()
-        logger.info(f"IP: {ip}, Location: {info.get('city', 'N/A')}, Datacenter: {is_datacenter}")
+        # IP and location are provider-derived network identity.  They are
+        # returned to the explicitly requested proxy-test operation, but must
+        # not be copied into ordinary process logs.
+        logger.info("Network trust check complete (datacenter=%s)", is_datacenter)
         return {
             "ip": ip,
             "city": info.get("city", "N/A"),
@@ -82,7 +85,7 @@ def profile_aging_simulation(driver):
         logger.info("Profile aging markers set")
         return True
     except Exception as e:
-        logger.warning(f"Profile aging failed: {e}")
+        logger.warning("Profile aging failed: %s", type(e).__name__)
         return False
 
 
@@ -118,7 +121,7 @@ def warm_up_session(driver):
         logger.info("Session warming complete")
         return True
     except Exception as e:
-        logger.warning(f"Session warming error: {e}")
+        logger.warning("Session warming error: %s", type(e).__name__)
         return False
 
 

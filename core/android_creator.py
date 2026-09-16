@@ -11,6 +11,12 @@ from config.settings import Config
 
 logger = logging.getLogger('gmail_creator_appium')
 
+# The mobile flow does not yet participate in the durable account/profile
+# lifecycle used by the desktop engines.  Keep the low-level entry point
+# fail-closed as well as the task runners so an embedding caller cannot start a
+# device session and leave an anonymous/partial account behind.
+APPIUM_SUPPORTED = False
+
 class AppiumManager:
     """Manages the Android emulator to create accounts via native OS settings (No Phone Verification bypass)"""
     
@@ -19,6 +25,11 @@ class AppiumManager:
         self.wait = None
 
     def initialize(self, proxy=None):
+        if not APPIUM_SUPPORTED:
+            logger.warning(
+                "Appium account creation is unsupported until its lifecycle contract is implemented"
+            )
+            return False
         logger.info("Initializing Appium Mobile Driver...")
         
         # Configure capabilities for Nox, MEmu, or standard AVD
@@ -35,7 +46,7 @@ class AppiumManager:
             logger.info("Appium driver connected to Android device successfully.")
             return True
         except Exception as e:
-            logger.error(f"Failed to connect to Appium server: {e}")
+            logger.error("Failed to connect to Appium server: %s", type(e).__name__)
             logger.error("Please ensure Appium server and an Android Emulator are running.")
             return False
 
@@ -79,7 +90,10 @@ class AppiumManager:
             time.sleep(10) # Wait for 'Checking info...' screen to pass
             return True
         except Exception as e:
-            logger.error(f"Failed to navigate to Add Account in Android Settings: {e}")
+            logger.error(
+                "Failed to navigate to Add Account in Android Settings: %s",
+                type(e).__name__,
+            )
             return False
 
     def start_creation_flow(self):
@@ -99,7 +113,7 @@ class AppiumManager:
             myself_btn.click()
             return True
         except Exception as e:
-            logger.error(f"Failed to start creation flow: {e}")
+            logger.error("Failed to start creation flow: %s", type(e).__name__)
             return False
 
     def fill_name(self, first_name, last_name):
@@ -120,7 +134,7 @@ class AppiumManager:
             self.driver.find_element(AppiumBy.ANDROID_UIAUTOMATOR, 'new UiSelector().textMatches("(?i)Next|التالي")').click()
             return True
         except Exception as e:
-            logger.error(f"Failed to fill name: {e}")
+            logger.error("Failed to fill name: %s", type(e).__name__)
             return False
             
     def fill_birthday_gender(self, month, day, year, gender):
@@ -155,7 +169,10 @@ class AppiumManager:
             self.driver.find_element(AppiumBy.ANDROID_UIAUTOMATOR, 'new UiSelector().textMatches("(?i)Next|التالي")').click()
             return True
         except Exception as e:
-            logger.error(f"Failed to fill birthday/gender appium flow: {e}")
+            logger.error(
+                "Failed to fill birthday/gender appium flow: %s",
+                type(e).__name__,
+            )
             return False
 
     def bypass_phone_challenge(self):

@@ -125,7 +125,7 @@ class WarmupEngine:
 
                 await page.wait_for_timeout(random.randint(3000, 8000))
             except Exception as e:
-                logger.warning(f"Warmup error: {e}")
+                logger.warning("Warmup error: %s", type(e).__name__)
                 continue
 
         try:

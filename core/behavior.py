@@ -64,7 +64,9 @@ class HumanBehavior:
                 
             return True
         except Exception as e:
-            logger.error(f"Natural typing failed on {selector}: {e}")
+            logger.error(
+                "Natural typing failed on %s (%s)", selector, type(e).__name__
+            )
             return False
 
     @staticmethod

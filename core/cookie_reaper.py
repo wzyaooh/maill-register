@@ -37,7 +37,7 @@ def load_trust_cookies():
             if isinstance(cookies, list) and len(cookies) > 0:
                 return cookies
     except Exception as e:
-        logger.warning(f"Error loading trust cookies: {e}")
+        logger.warning("Error loading trust cookies: %s", type(e).__name__)
     return []
 
 
@@ -78,7 +78,7 @@ def inject_cookies_selenium(driver):
             logger.info(f"Cookie Reaper: Injected {injected} trust cookies (Selenium)")
             return True
     except Exception as e:
-        logger.warning(f"Selenium cookie injection error: {e}")
+        logger.warning("Selenium cookie injection error: %s", type(e).__name__)
     return False
 
 
@@ -125,5 +125,5 @@ async def inject_cookies_playwright(page):
             logger.info(f"Cookie Reaper: Injected {len(playwright_cookies)} trust cookies (Playwright)")
             return True
     except Exception as e:
-        logger.warning(f"Playwright cookie injection error: {e}")
+        logger.warning("Playwright cookie injection error: %s", type(e).__name__)
     return False

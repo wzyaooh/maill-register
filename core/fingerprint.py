@@ -333,7 +333,9 @@ def inject_selenium_fingerprint(driver):
         logger.info(f"Selenium fingerprint injected: {random_cores} cores, {random_memory}GB")
         return True
     except Exception as e:
-        logger.warning(f"Selenium fingerprint injection error: {e}")
+        logger.warning(
+            "Selenium fingerprint injection error: %s", type(e).__name__
+        )
         return False
 
 
@@ -344,5 +346,5 @@ def inject_selenium_poltergeist(driver):
         logger.info("Poltergeist fingerprint applied via execute_script")
         return True
     except Exception as e:
-        logger.warning(f"Poltergeist injection error: {e}")
+        logger.warning("Poltergeist injection error: %s", type(e).__name__)
         return False

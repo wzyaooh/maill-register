@@ -80,5 +80,6 @@ Thumbs.db
 # Runtime database
 data/database.db
 data/web/
+data/profiles/
 .env-web-*
 runtime/

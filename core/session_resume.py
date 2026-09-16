@@ -7,6 +7,8 @@ import logging
 import tempfile
 from datetime import datetime
 
+from core.secret_safety import sanitize_operation_value
+
 logger = logging.getLogger('gmail_creator_session')
 
 SESSION_FILE = "data/session_state.json"
@@ -20,9 +22,9 @@ class SessionManager:
         """Save current batch progress for later resume."""
         state = {
             "saved_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            "batch_config": batch_config,
+            "batch_config": sanitize_operation_value(batch_config),
             "completed_indices": completed_indices,
-            "results": results,
+            "results": sanitize_operation_value(results),
         }
         directory = os.path.dirname(self.filepath) or "."
         os.makedirs(directory, exist_ok=True)
@@ -43,11 +45,15 @@ class SessionManager:
         try:
             with open(self.filepath, "r", encoding="utf-8") as f:
                 state = json.load(f)
+            # Legacy session files may predate the output policy.  Sanitize on
+            # read as well as write so a resume worker never consumes or
+            # re-emits credentials copied into old progress records.
+            state = sanitize_operation_value(state)
             self.validate_state(state)
             logger.info(f"Session loaded from {state.get('saved_at', 'unknown')}")
             return state
         except Exception as e:
-            logger.warning(f"Failed to load session: {e}")
+            logger.warning("Failed to load session: %s", type(e).__name__)
             return None
 
     def clear_state(self):

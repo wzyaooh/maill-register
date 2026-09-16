@@ -7,24 +7,36 @@ import json
 import logging
 from datetime import datetime
 from core.database import DatabaseManager
+from core.secret_safety import safe_account_metadata_rows, SAFE_ACCOUNT_EXPORT_FIELDS
 
 logger = logging.getLogger('gmail_creator_accounts')
 
 
 class AccountManager:
-    def __init__(self):
-        self.db = DatabaseManager()
+    def __init__(self, db_path=None):
+        self.db = DatabaseManager(db_path) if db_path else DatabaseManager()
 
     def save(self, email, password, first_name="", last_name="",
              proxy="", strategy="", sms_service="", phone_number="",
-             birthday="", gender="", status="active", notes=""):
+             birthday="", gender="", status="active", notes="", profile_path="",
+             profile_id="", engine="", profile_state="", identity_state="",
+             browser_status="", mailbox_status="", overall_status="",
+             browser_checked_at="", mailbox_checked_at="", last_error_code="",
+             registration_result=None, warm_result=None):
         return self.db.save_account(
             email=email, password=password,
             first_name=first_name, last_name=last_name,
             proxy=proxy, strategy=strategy,
             sms_service=sms_service, phone_number=phone_number,
             birthday=birthday, gender=gender,
-            status=status, notes=notes,
+            status=status, notes=notes, profile_path=profile_path,
+            profile_id=profile_id, engine=engine, profile_state=profile_state,
+            identity_state=identity_state, browser_status=browser_status,
+            mailbox_status=mailbox_status, overall_status=overall_status,
+            browser_checked_at=browser_checked_at, mailbox_checked_at=mailbox_checked_at,
+            last_error_code=last_error_code,
+            registration_result=registration_result,
+            warm_result=warm_result,
         )
 
     def get_all(self):
@@ -36,11 +48,12 @@ class AccountManager:
 
     def get_stats(self):
         accounts = self.db.get_all_accounts()
+        metadata_accounts = safe_account_metadata_rows(accounts)
         total = len(accounts)
         active = sum(1 for a in accounts if a.get("status") == "active")
         strategies = {}
         sms_services = {}
-        for a in accounts:
+        for a in metadata_accounts:
             s = a.get("strategy", "unknown") or "unknown"
             strategies[s] = strategies.get(s, 0) + 1
             svc = a.get("sms_service", "") or ""
@@ -62,27 +75,20 @@ class AccountManager:
     def export_csv(self, filepath=None):
         if not filepath:
             filepath = f"data/accounts_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-        accounts = self.db.get_all_accounts()
+        accounts = safe_account_metadata_rows(self.db.get_all_accounts())
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
         with open(filepath, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
-            writer.writerow(["Email", "Password", "First Name", "Last Name",
-                             "Proxy", "Strategy", "SMS Service", "Status", "Created At"])
+            writer.writerow(list(SAFE_ACCOUNT_EXPORT_FIELDS))
             for acc in accounts:
-                writer.writerow([
-                    acc.get("email", ""), acc.get("password", ""),
-                    acc.get("first_name", ""), acc.get("last_name", ""),
-                    acc.get("proxy", ""), acc.get("strategy", ""),
-                    acc.get("sms_service", ""), acc.get("status", ""),
-                    acc.get("created_at", ""),
-                ])
+                writer.writerow([acc.get(key, "") for key in SAFE_ACCOUNT_EXPORT_FIELDS])
         logger.info(f"Exported {len(accounts)} accounts to CSV: {filepath}")
         return filepath
 
     def export_json(self, filepath=None):
         if not filepath:
             filepath = f"data/accounts_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-        accounts = self.db.get_all_accounts()
+        accounts = safe_account_metadata_rows(self.db.get_all_accounts())
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
         with open(filepath, "w", encoding="utf-8") as f:
             json.dump(accounts, f, indent=2, ensure_ascii=False)
@@ -92,11 +98,11 @@ class AccountManager:
     def export_txt(self, filepath=None):
         if not filepath:
             filepath = f"data/accounts_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-        accounts = self.db.get_all_accounts()
+        accounts = safe_account_metadata_rows(self.db.get_all_accounts())
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
         with open(filepath, "w", encoding="utf-8") as f:
             for acc in accounts:
-                f.write(f"{acc.get('email', '')}:{acc.get('password', '')}\n")
+                f.write(f"{acc.get('email', '')}\n")
         logger.info(f"Exported {len(accounts)} accounts to TXT: {filepath}")
         return filepath
 
@@ -118,7 +124,7 @@ class AccountManager:
                                 migrated += 1
                 logger.info(f"Migrated {migrated} accounts from accounts.txt")
             except Exception as e:
-                logger.error(f"TXT migration failed: {e}")
+                logger.error("TXT migration failed: %s", type(e).__name__)
 
         # Migrate accounts.json
         json_path = "data/accounts.json"
@@ -129,18 +135,30 @@ class AccountManager:
                 count = 0
                 for acc in data:
                     if isinstance(acc, dict) and "email" in acc:
+                        profile = self.db.migration_profile_projection(acc)
                         if self.db.save_account(
                             email=acc.get("email", ""),
                             password=acc.get("password", ""),
                             first_name=acc.get("first_name", ""),
                             last_name=acc.get("last_name", ""),
+                            proxy=acc.get("proxy", ""),
+                            strategy=acc.get("strategy", ""),
+                            sms_service=acc.get("sms_service", ""),
+                            phone_number=acc.get("phone_number", ""),
+                            birthday=acc.get("birthday", ""),
+                            gender=acc.get("gender", ""),
                             status=acc.get("status", "active"),
+                            notes=acc.get("notes", ""),
+                            **profile,
+                            browser_checked_at=acc.get("browser_checked_at", ""),
+                            mailbox_checked_at=acc.get("mailbox_checked_at", ""),
+                            last_error_code=acc.get("last_error_code", ""),
                         ):
                             count += 1
                 migrated += count
                 logger.info(f"Migrated {count} accounts from accounts.json")
             except Exception as e:
-                logger.error(f"JSON migration failed: {e}")
+                logger.error("JSON migration failed: %s", type(e).__name__)
 
         return migrated
 

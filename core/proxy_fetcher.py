@@ -3,6 +3,7 @@ Auto Proxy Fetcher - Automatically fetch free proxies from public sources
 """
 import logging
 import requests
+from core.secret_safety import safe_proxy_label
 import random
 import time
 
@@ -54,7 +55,9 @@ def fetch_proxies(max_per_source=50):
                 all_proxies.update(sample)
                 logger.info(f"Fetched {len(sample)} proxies from {source['name']}")
         except Exception as e:
-            logger.warning(f"Failed to fetch from {source['name']}: {e}")
+            logger.warning(
+                "Failed to fetch from %s: %s", source["name"], type(e).__name__
+            )
 
     return list(all_proxies)
 
@@ -95,7 +98,7 @@ def fetch_and_test(max_proxies=20, test_count=50, timeout=8):
         ok, ip = test_proxy(proxy, timeout=timeout)
         if ok:
             working.append(proxy)
-            logger.info(f"Working proxy: {proxy} -> {ip}")
+            logger.info("Working proxy: %s -> %s", safe_proxy_label(proxy), ip)
             if len(working) >= max_proxies:
                 break
 

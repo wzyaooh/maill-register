@@ -17,6 +17,178 @@ def _load_js_file(filename):
             return f.read()
     return None
 
+
+def _build_context_profile(is_premium, profile_identity=None):
+    """Build one browser identity and the options used by every context type."""
+    # A persisted profile is authoritative.  Do this branch before touching
+    # the registration randomizers below so health/warm launches cannot
+    # accidentally replace a native identity with a fresh one.
+    if profile_identity is not None:
+        identity = dict(profile_identity or {})
+        viewport = dict(identity.get("viewport") or {})
+        try:
+            width = int(viewport.get("width", 1366))
+            height = int(viewport.get("height", 768))
+        except (TypeError, ValueError):
+            width, height = 1366, 768
+        if width <= 0 or height <= 0:
+            width, height = 1366, 768
+
+        ua = str(identity.get("user_agent") or (
+            "Mozilla/5.0 (Linux x86_64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        ))
+        chrome_ver = "120.0.0.0"
+        chrome_major = "120"
+        try:
+            chrome_ver = ua.split("Chrome/", 1)[1].split(" ", 1)[0]
+            chrome_major = chrome_ver.split(".", 1)[0]
+        except (IndexError, ValueError):
+            pass
+        locale = str(identity.get("locale") or "en-US")
+        language = locale.split("-", 1)[0]
+        accept_language = (
+            f"{locale},{language};q=0.9" if language != locale
+            else f"{locale};q=0.9"
+        )
+        timezone_id = str(identity.get("timezone_id") or "UTC")
+        location = dict(identity.get("geolocation") or {})
+        try:
+            longitude = float(location.get("longitude", 0.0))
+            latitude = float(location.get("latitude", 0.0))
+        except (TypeError, ValueError):
+            longitude, latitude = 0.0, 0.0
+        hardware = int(identity.get("hardware_concurrency") or 8)
+        memory = int(identity.get("device_memory") or 8)
+        is_mobile = bool(identity.get("is_mobile", False))
+        has_touch = bool(identity.get("has_touch", is_mobile))
+        platform = str((identity.get("client_hints") or {}).get("platform") or (
+            "Android" if is_mobile else "Linux"
+        ))
+        return {
+            "chrome_ver": chrome_ver,
+            "chrome_major": chrome_major,
+            "sp": {"width": width, "height": height,
+                   "aw": width, "ah": max(0, height - 40)},
+            "hw": hardware,
+            "mem": memory,
+            "geo": {"tz": timezone_id, "lon": longitude, "lat": latitude},
+            "is_mobile": is_mobile,
+            "context_options": {
+                "viewport": {"width": width, "height": height},
+                "user_agent": ua,
+                "locale": locale,
+                "timezone_id": timezone_id,
+                "has_touch": has_touch,
+                "is_mobile": is_mobile,
+                "geolocation": {"longitude": longitude, "latitude": latitude},
+                "permissions": ["geolocation"],
+                "color_scheme": "light",
+                "extra_http_headers": {
+                    "Accept-Language": accept_language,
+                    "Accept-Encoding": "gzip, deflate, br, zstd",
+                    "sec-ch-ua": (
+                        f'"Google Chrome";v="{chrome_major}", '
+                        f'"Chromium";v="{chrome_major}", "Not_A Brand";v="24"'
+                    ),
+                    "sec-ch-ua-mobile": "?1" if is_mobile else "?0",
+                    "sec-ch-ua-platform": f'"{platform}"',
+                    "sec-fetch-dest": "document",
+                    "sec-fetch-mode": "navigate",
+                    "sec-fetch-site": "none",
+                    "sec-fetch-user": "?1",
+                    "Upgrade-Insecure-Requests": "1",
+                },
+            },
+        }
+
+    chrome_versions = [
+        "134.0.6998.117", "134.0.6998.89",  "133.0.6943.141",
+        "133.0.6943.126", "132.0.6834.160", "132.0.6834.110",
+        "131.0.6778.264", "131.0.6778.205",
+    ]
+    chrome_ver = random.choice(chrome_versions)
+    chrome_major = chrome_ver.split(".")[0]
+
+    screen_profiles = [
+        {"width": 1920, "height": 1080, "aw": 1920, "ah": 1040},
+        {"width": 1366, "height": 768,  "aw": 1366, "ah": 728},
+        {"width": 1536, "height": 864,  "aw": 1536, "ah": 824},
+        {"width": 1440, "height": 900,  "aw": 1440, "ah": 860},
+        {"width": 2560, "height": 1440, "aw": 2560, "ah": 1400},
+    ]
+    sp = random.choice(screen_profiles)
+    hw = random.choice([4, 6, 8, 12, 16])
+    mem = random.choice([4, 8, 16])
+
+    geo_profiles = [
+        {"tz": "America/New_York",    "lon": -74.006,   "lat": 40.7128},
+        {"tz": "America/Chicago",     "lon": -87.6298,  "lat": 41.8781},
+        {"tz": "America/Los_Angeles", "lon": -118.2437, "lat": 34.0522},
+        {"tz": "Europe/London",       "lon": -0.1276,   "lat": 51.5074},
+        {"tz": "Europe/Berlin",       "lon": 13.4050,   "lat": 52.5200},
+    ]
+    geo = random.choice(geo_profiles)
+
+    if is_premium:
+        # Mobile emulation forces SMS verification instead of QR.
+        ua = (
+            f"Mozilla/5.0 (Linux; Android 14; SM-S918B) "
+            f"AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{chrome_ver} Mobile Safari/537.36"
+        )
+        viewport = {"width": 412, "height": 915}
+        is_mobile = True
+        has_touch = True
+        sec_ch_ua_mobile = "?1"
+        sec_ch_ua_platform = '"Android"'
+    else:
+        ua = (
+            f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            f"AppleWebKit/537.36 (KHTML, like Gecko) "
+            f"Chrome/{chrome_ver} Safari/537.36"
+        )
+        viewport = {"width": sp["width"], "height": sp["height"]}
+        is_mobile = False
+        has_touch = False
+        sec_ch_ua_mobile = "?0"
+        sec_ch_ua_platform = '"Windows"'
+
+    return {
+        "chrome_ver": chrome_ver,
+        "chrome_major": chrome_major,
+        "sp": sp,
+        "hw": hw,
+        "mem": mem,
+        "geo": geo,
+        "is_mobile": is_mobile,
+        "context_options": {
+            "viewport": viewport,
+            "user_agent": ua,
+            "locale": "en-US",
+            "timezone_id": geo["tz"],
+            "has_touch": has_touch,
+            "is_mobile": is_mobile,
+            "geolocation": {"longitude": geo["lon"], "latitude": geo["lat"]},
+            "permissions": ["geolocation"],
+            "color_scheme": "light",
+            "extra_http_headers": {
+                "Accept-Language": "en-US,en;q=0.9",
+                "Accept-Encoding": "gzip, deflate, br, zstd",
+                "sec-ch-ua": (
+                    f'"Google Chrome";v="{chrome_major}", '
+                    f'"Chromium";v="{chrome_major}", "Not_A Brand";v="24"'
+                ),
+                "sec-ch-ua-mobile": sec_ch_ua_mobile,
+                "sec-ch-ua-platform": sec_ch_ua_platform,
+                "sec-fetch-dest": "document",
+                "sec-fetch-mode": "navigate",
+                "sec-fetch-site": "none",
+                "sec-fetch-user": "?1",
+                "Upgrade-Insecure-Requests": "1",
+            },
+        },
+    }
+
 # Playwright stealth
 try:
     from playwright_stealth import stealth_async
@@ -34,11 +206,39 @@ class PlaywrightStealthManager:
         self.context = None
         self.page = None
         self.is_mobile = False
+        self._runtime_info = {}
 
-    async def initialize(self, proxy=None, is_premium=False):
+    async def initialize(self, proxy=None, is_premium=False, profile_path=None,
+                         profile_manifest=None, lease_owned=False,
+                         purpose="registration", profile_lease=None):
         logger.info("Initializing Playwright Stealth Browser...")
-        self.playwright = await async_playwright().start()
-        
+        from core.profile_runtime import (
+            ProfileConflictError, ProfileRuntime, ProfileRuntimeMismatchError,
+            ProxyUnavailableError,
+            proxy_launch_config,
+            validate_profile_identity,
+        )
+        if profile_manifest is not None and not lease_owned:
+            raise ProfileConflictError(
+                "a persisted profile must be initialized while its lease is held"
+            )
+        if profile_manifest is not None and not profile_path:
+            raise ProfileConflictError(
+                "a persisted profile requires its persistent profile path"
+            )
+        if purpose in ("health", "warm") and (
+                profile_manifest is None or not profile_path or not lease_owned):
+            raise ProfileConflictError(
+                "health/warm profile launches require a resolved manifest and lease"
+            )
+        if profile_manifest is not None:
+            # Persisted sessions must use exactly the identity captured by the
+            # runtime.  Do this before starting Playwright so a partial/tampered
+            # manifest cannot fall through to adapter defaults.
+            validate_profile_identity(profile_manifest.get("identity"))
+        stable_check = getattr(profile_lease, "assert_stable", None)
+        if callable(stable_check):
+            stable_check()
         launch_args = [
             '--disable-blink-features=AutomationControlled',
             '--disable-features=IsolateOrigins,site-per-process,AutomationControlled',
@@ -58,126 +258,174 @@ class PlaywrightStealthManager:
             '--window-position=0,0',
         ]
         
-        # Setup proxy formatting if provided
+        # Setup proxy formatting if provided.  A bound profile must always be
+        # reopened with the same non-secret endpoint; absence is an error too.
+        if profile_manifest is not None:
+            ProfileRuntime.from_environment().validate_proxy(profile_manifest, proxy)
         proxy_settings = None
         if proxy:
-            parts = proxy.split(':')
-            if len(parts) == 4:
-                # Format: host:port:user:pass
-                proxy_settings = {
-                    "server": f"http://{parts[0]}:{parts[1]}",
-                    "username": parts[2],
-                    "password": parts[3]
-                }
-                logger.info(f"Proxy configured: {parts[0]}:{parts[1]} (authenticated)")
-            elif len(parts) == 2:
-                # Format: host:port
-                proxy_settings = {"server": f"http://{parts[0]}:{parts[1]}"}
-                logger.info(f"Proxy configured: {parts[0]}:{parts[1]}")
+            proxy_settings = proxy_launch_config(proxy)
+            if proxy_settings is None:
+                raise ProxyUnavailableError("configured proxy has an invalid format")
+            if proxy_settings.get("username") is not None:
+                logger.info("Proxy configured with authenticated endpoint")
             else:
-                logger.error(f"Invalid proxy format '{proxy}'. Expected 'host:port' or 'host:port:user:pass'. Proxy disabled.")
-                proxy_settings = None
-                
-        # Launch real chrome/chromium — try installed Chrome first, fall back to bundled Chromium
-        try:
-            self.browser = await self.playwright.chromium.launch(
-                headless=Config.HEADLESS_MODE,
-                args=launch_args,
-                proxy=proxy_settings,
-                channel="chrome"
-            )
-        except Exception:
-            logger.info("Installed Chrome not found, falling back to bundled Chromium...")
-            self.browser = await self.playwright.chromium.launch(
-                headless=Config.HEADLESS_MODE,
-                args=launch_args,
-                proxy=proxy_settings,
-            )
-        
+                # The endpoint is operationally useful to the browser but is
+                # not needed in diagnostics; keeping it out avoids leaking a
+                # provider URL if proxy parsing changes in the future.
+                logger.info("Proxy configured with unauthenticated endpoint")
 
-        # ── Fingerprint profile (randomized per session) ───────────────────────
-        chrome_versions = [
-            "134.0.6998.117", "134.0.6998.89",  "133.0.6943.141",
-            "133.0.6943.126", "132.0.6834.160", "132.0.6834.110",
-            "131.0.6778.264", "131.0.6778.205",
-        ]
-        chrome_ver   = random.choice(chrome_versions)
-        chrome_major = chrome_ver.split(".")[0]
-
-        screen_profiles = [
-            {"width": 1920, "height": 1080, "aw": 1920, "ah": 1040},
-            {"width": 1366, "height": 768,  "aw": 1366, "ah": 728},
-            {"width": 1536, "height": 864,  "aw": 1536, "ah": 824},
-            {"width": 1440, "height": 900,  "aw": 1440, "ah": 860},
-            {"width": 2560, "height": 1440, "aw": 2560, "ah": 1400},
-        ]
-        sp  = random.choice(screen_profiles)
-        hw  = random.choice([4, 6, 8, 12, 16])
-        mem = random.choice([4, 8, 16])
-
-        geo_profiles = [
-            {"tz": "America/New_York",    "lon": -74.006,   "lat": 40.7128},
-            {"tz": "America/Chicago",     "lon": -87.6298,  "lat": 41.8781},
-            {"tz": "America/Los_Angeles", "lon": -118.2437, "lat": 34.0522},
-            {"tz": "Europe/London",       "lon": -0.1276,   "lat": 51.5074},
-            {"tz": "Europe/Berlin",       "lon": 13.4050,   "lat": 52.5200},
-        ]
-        geo = random.choice(geo_profiles)
-
-        if is_premium:
-            # Mobile emulation forces SMS verification instead of QR (no QR scanning on mobile devices natively)
-            ua = f"Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{chrome_ver} Mobile Safari/537.36"
-            viewport = {"width": 412, "height": 915}
-            is_mobile = True
-            has_touch = True
-            sec_ch_ua_mobile = "?1"
-            sec_ch_ua_platform = '"Android"'
+        # Validate the recorded engine and build the identity before starting
+        # Playwright.  An engine conflict must not leave a partially started
+        # runtime behind.
+        if profile_manifest is not None:
+            if profile_manifest.get("engine") not in (None, "playwright"):
+                raise ProfileConflictError("profile manifest is bound to a different engine")
+            profile_identity = profile_manifest.get("identity") or {}
         else:
-            ua = (
-                f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                f"AppleWebKit/537.36 (KHTML, like Gecko) "
-                f"Chrome/{chrome_ver} Safari/537.36"
-            )
-            viewport = {"width": sp["width"], "height": sp["height"]}
-            is_mobile = False
-            has_touch = False
-            sec_ch_ua_mobile = "?0"
-            sec_ch_ua_platform = '"Windows"'
+            profile_identity = None
+        context_profile = _build_context_profile(is_premium, profile_identity)
+        chrome_ver = context_profile["chrome_ver"]
+        chrome_major = context_profile["chrome_major"]
+        sp = context_profile["sp"]
+        hw = context_profile["hw"]
+        mem = context_profile["mem"]
+        geo = context_profile["geo"]
+        is_mobile = context_profile["is_mobile"]
+        context_options = context_profile["context_options"]
+        # The launch flag is part of the native browser identity too.  Keep
+        # registration's historical default, but use the persisted locale for
+        # every health/warm launch of an existing profile.
+        persisted_locale = context_options.get("locale") or "en-US"
+        launch_args = [
+            f"--lang={persisted_locale}" if value == "--lang=en-US" else value
+            for value in launch_args
+        ]
 
-        self.context = await self.browser.new_context(
-            viewport=viewport,
-            user_agent=ua,
-            locale="en-US",
-            timezone_id=geo["tz"],
-            has_touch=has_touch,
-            is_mobile=is_mobile,
-            geolocation={"longitude": geo["lon"], "latitude": geo["lat"]},
-            permissions=["geolocation"],
-            color_scheme="light",
-            extra_http_headers={
-                "Accept-Language": "en-US,en;q=0.9",
-                "Accept-Encoding": "gzip, deflate, br, zstd",
-                "sec-ch-ua": f'"Google Chrome";v="{chrome_major}", "Chromium";v="{chrome_major}", "Not_A Brand";v="24"',
-                "sec-ch-ua-mobile": sec_ch_ua_mobile,
-                "sec-ch-ua-platform": sec_ch_ua_platform,
-                "sec-fetch-dest": "document",
-                "sec-fetch-mode": "navigate",
-                "sec-fetch-site": "none",
-                "sec-fetch-user": "?1",
-                "Upgrade-Insecure-Requests": "1",
-            }
+        recorded_channel = (
+            ((profile_manifest or {}).get("browser") or {}).get("channel")
+            or "chrome"
         )
+        recorded_browser = ((profile_manifest or {}).get("browser") or {})
+        channel_unknown = bool(profile_manifest is not None and
+                               not recorded_browser.get("channel"))
+        # A profile that has already been bound is immutable: if its recorded
+        # channel cannot be launched, do not reopen the same user-data
+        # directory with a different browser.  Provisioning is the normal
+        # exception because registration has not established a runtime binding
+        # yet.  An adopted legacy profile has an explicitly unknown channel and
+        # may establish its first actual runtime in the same way; once that
+        # observation is recorded, subsequent warm/health launches are strict.
+        allow_channel_fallback = (
+            purpose == "registration" or profile_manifest is None or channel_unknown
+        )
+
+        self.playwright = await async_playwright().start()
+        # Starting the Playwright controller can take a measurable amount of
+        # time.  Re-check immediately before handing the persistent directory
+        # to Chromium so a path replacement cannot detach it from the lease.
+        if callable(stable_check):
+            stable_check()
+
+        # Launch the recorded browser channel.  The fallback path is limited to
+        # registration/provisioning; health and warm operations surface a
+        # structured runtime_mismatch instead of silently changing runtimes.
+        actual_channel = recorded_channel
+        try:
+            if profile_path:
+                if callable(stable_check):
+                    stable_check()
+                # A resolved persistent profile already exists.  Avoid
+                # creating/following the pathname again; registration-only
+                # temporary launches are the sole case that may create it.
+                if profile_manifest is None:
+                    os.makedirs(profile_path, exist_ok=True)
+                self.context = await self.playwright.chromium.launch_persistent_context(
+                    profile_path, headless=Config.HEADLESS_MODE,
+                    args=launch_args, proxy=proxy_settings,
+                    channel=recorded_channel,
+                    **context_options,
+                )
+            else:
+                self.browser = await self.playwright.chromium.launch(
+                    headless=Config.HEADLESS_MODE,
+                    args=launch_args, proxy=proxy_settings, channel=recorded_channel
+                )
+        except Exception as launch_error:
+            if not allow_channel_fallback:
+                raise ProfileRuntimeMismatchError(
+                    "recorded browser channel could not be launched"
+                ) from launch_error
+            logger.info("Installed Chrome not found, falling back to bundled Chromium...")
+            actual_channel = "chromium"
+            if profile_path:
+                if callable(stable_check):
+                    stable_check()
+                self.context = await self.playwright.chromium.launch_persistent_context(
+                    profile_path, headless=Config.HEADLESS_MODE,
+                    args=launch_args, proxy=proxy_settings,
+                    **context_options,
+                )
+            else:
+                self.browser = await self.playwright.chromium.launch(
+                    headless=Config.HEADLESS_MODE,
+                    args=launch_args, proxy=proxy_settings,
+                )
+
+        if self.context is None:
+            self.context = await self.browser.new_context(**context_options)
 
         self.is_mobile = is_mobile
         self.page = await self.context.new_page()
 
-        # ── Apply playwright-stealth ────────────────────────────────────────
-        if stealth_async:
+        # Prefer the runtime's reported version when the adapter exposes it;
+        # the manifest identity's UA is only a safe fallback for older/fake
+        # adapters that provide no browser version property.
+        actual_major = chrome_major
+        runtime_version_observed = False
+        try:
+            browser_obj = getattr(self.context, "browser", None) or self.browser
+            version = getattr(browser_obj, "version", None)
+            if callable(version):
+                version = version()
+            if hasattr(version, "__await__"):
+                version = await version
+            if version:
+                actual_major = str(version).split(".", 1)[0]
+                runtime_version_observed = True
+        except Exception:
+            pass
+        self._runtime_info = {
+            "channel": actual_channel,
+            "major_version": str(actual_major or ""),
+        }
+        recorded_major = str(
+            (((profile_manifest or {}).get("browser") or {}).get("major_version")
+             or "")
+        ).strip()
+        if (recorded_major and runtime_version_observed and actual_major
+                and recorded_major != str(actual_major)):
+            # Do not return a live browser whose identity differs from the
+            # persisted profile. Close owned resources before surfacing the
+            # deterministic kernel error.
+            await self.close()
+            raise ProfileRuntimeMismatchError(
+                "running browser major version does not match the profile manifest"
+            )
+
+        # Registration-only compatibility hooks must not mutate a profile while
+        # health/warm probes are observing it.
+        if stealth_async and purpose == "registration":
             try:
                 await stealth_async(self.page)
                 logger.info("Stealth plugin applied successfully.")
             except Exception as e:
-                logger.warning(f"Failed to apply stealth plugin: {e}")
+                logger.warning("Failed to apply stealth plugin: %s", type(e).__name__)
+
+        # ── Optional registration fingerprint compatibility script ────────
+        if purpose != "registration":
+            logger.info("Probe/warm mode: registration compatibility scripts disabled")
+            return True
 
         # ── 12-point fingerprint spoofing (Clean & Dynamic) ────
         rtt     = random.choice([25, 50, 100, 150])
@@ -313,7 +561,7 @@ class PlaywrightStealthManager:
             try:
                 await WarmupEngine.run_warmup(self.page, duration_minutes=1)
             except Exception as wu_e:
-                logger.warning(f"Warmup failed (non-fatal): {wu_e}")
+                logger.warning("Warmup failed (non-fatal): %s", type(wu_e).__name__)
         else:
             logger.info("Session warming disabled or Premium Mode active (skipping warmup).")
 
@@ -339,39 +587,52 @@ class PlaywrightStealthManager:
                 if injected:
                     logger.info("Cookie Reaper: Trust cookies injected into context")
             except Exception as cr_e:
-                logger.warning(f"Cookie Reaper injection failed (non-fatal): {cr_e}")
+                logger.warning("Cookie Reaper injection failed (non-fatal): %s", type(cr_e).__name__)
 
-        logger.info(f"FP: Chrome/{chrome_ver} | {sp['width']}x{sp['height']} | {geo['tz']} | {hw}c/{mem}GB")
+        logger.info("Fingerprint profile initialized")
+        # Keep the actual launch channel/version, including a registration
+        # fallback to bundled Chromium, as the durable runtime observation.
         return True
+
+    def get_runtime_info(self):
+        return dict(getattr(self, "_runtime_info", {}))
 
 
     async def close(self):
-        try:
-            if self.page:
-                await self.page.close()
-        except Exception:
-            pass
-        try:
-            if self.context:
-                await self.context.close()
-        except Exception:
-            pass
-        try:
-            if self.browser:
-                await self.browser.close()
-        except Exception:
-            pass
-        try:
-            if self.playwright:
-                await self.playwright.stop()
-        except Exception:
-            pass
+        errors = []
+        process_checks = []
+        resources = (
+            ("page", self.page, "close", False),
+            ("context", self.context, "close", True),
+            ("browser", self.browser, "close", True),
+            ("playwright", self.playwright, "stop", True),
+        )
+        for name, resource, method_name, owns_process in resources:
+            if resource is None:
+                continue
+            try:
+                await getattr(resource, method_name)()
+                if owns_process:
+                    process_checks.append(True)
+                setattr(self, name, None)
+            except Exception as exc:
+                errors.append((name, type(exc).__name__))
+                if owns_process:
+                    process_checks.append(False)
+                logger.error("Unable to close Playwright %s: %s", name, type(exc).__name__)
+        return {
+            "success": not errors,
+            # No process was started when every owned resource is absent (for
+            # example, initialize() failed before creating a context).
+            "browser_process_stopped": not process_checks or all(process_checks),
+            "failed_resources": [name for name, _kind in errors],
+        }
             
     async def natural_type(self, selector, text):
         try:
             return await HumanBehavior.natural_type(self.page, selector, text, make_typos=Config.ENABLE_HUMAN_TYPING_ERRORS)
         except Exception as e:
-            logger.warning(f"natural_type failed for '{selector}': {e}")
+            logger.warning("natural_type failed: %s", type(e).__name__)
             return False
         
     async def natural_click(self, selector):
@@ -389,7 +650,7 @@ class PlaywrightStealthManager:
                 return True
             return False
         except Exception as e:
-            logger.warning(f"natural_click failed for '{selector}': {e}")
+            logger.warning("natural_click failed: %s", type(e).__name__)
             return False
 
     async def _wait_for_birthday_page(self, timeout_ms=20000):
@@ -416,7 +677,9 @@ class PlaywrightStealthManager:
     async def fill_birthday_gender(self, month, day, year, gender):
         """Fill birthday (month, day, year) and gender on Google signup page."""
         try:
-            logger.info(f"fill_birthday_gender: month={month}, day={day}, year={year}, gender={gender}")
+            # Birthday and gender are user-provided data; they are not needed
+            # to diagnose selector failures and should not enter logs.
+            logger.info("Filling birthday and gender fields")
 
             page_found = await self._wait_for_birthday_page(timeout_ms=20000)
             if not page_found:
@@ -553,16 +816,16 @@ class PlaywrightStealthManager:
             # ─── GENDER (fast & correct) ─────────────────────────────────────
             # Debug: Log what select elements exist on the page
             try:
-                select_info = await self.page.evaluate("""() => {
-                    const selects = document.querySelectorAll('select');
-                    const info = [];
-                    for (const s of selects) {
-                        const opts = Array.from(s.options).map(o => o.value + '=' + o.textContent.trim());
-                        info.push({id: s.id, name: s.name, visible: s.offsetParent !== null, opts: opts});
-                    }
-                    return JSON.stringify(info);
-                }""")
-                logger.info(f"Page select elements: {select_info}")
+                select_count = await self.page.evaluate(
+                    "() => document.querySelectorAll('select').length"
+                )
+                if isinstance(select_count, bool):
+                    select_count = 0
+                try:
+                    select_count = max(0, min(int(select_count), 1000))
+                except (TypeError, ValueError):
+                    select_count = 0
+                logger.info("Page select elements detected: %s", select_count)
             except Exception:
                 pass
 
@@ -644,11 +907,11 @@ class PlaywrightStealthManager:
                 }""", [gval, gtext])
                 if result and result.startswith('ok'):
                     gender_ok = True
-                    logger.info(f"Gender set via JS: {result}")
+                    logger.info("Gender set via JS")
                 else:
-                    logger.warning(f"Gender JS result: {result}")
+                    logger.warning("Gender JS strategy did not select an option")
             except Exception as e:
-                logger.debug(f"Gender JS strategy failed: {e}")
+                logger.debug("Gender JS strategy failed: %s", type(e).__name__)
 
             # Strategy B: Playwright select_option on all matching selectors
             if not gender_ok:
@@ -671,14 +934,14 @@ class PlaywrightStealthManager:
                             try:
                                 await el.select_option(value=gval)
                                 gender_ok = True
-                                logger.info(f"Gender set via select_option(value={gval})")
+                                logger.info("Gender set via select option")
                                 break
                             except Exception:
                                 pass
                             try:
                                 await el.select_option(label=gtext)
                                 gender_ok = True
-                                logger.info(f"Gender set via select_option(label={gtext})")
+                                logger.info("Gender set via select option label")
                                 break
                             except Exception:
                                 pass
@@ -720,9 +983,9 @@ class PlaywrightStealthManager:
                             await self.page.wait_for_timeout(100)
                         await self.page.wait_for_timeout(200)
                         gender_ok = True
-                        logger.info(f"Gender set via keyboard ({presses} ArrowDown)")
+                        logger.info("Gender set via keyboard")
                 except Exception as e:
-                    logger.debug(f"Gender keyboard strategy failed: {e}")
+                    logger.debug("Gender keyboard strategy failed: %s", type(e).__name__)
 
             # Strategy D: Handle Material Design / Web Component dropdowns
             # Google may use <md-outlined-select>, div[role="listbox"], or custom elements
@@ -775,18 +1038,18 @@ class PlaywrightStealthManager:
                             }""", gtext)
                             if option_clicked and option_clicked.startswith('clicked'):
                                 gender_ok = True
-                                logger.info(f"Gender set via MD component: {option_clicked}")
+                                logger.info("Gender set via MD component")
                         except Exception:
                             pass
                 except Exception as e:
-                    logger.debug(f"Gender MD component strategy failed: {e}")
+                    logger.debug("Gender MD component strategy failed: %s", type(e).__name__)
 
             if not gender_ok:
-                logger.warning(f"Could not select gender '{gtext}' — continuing anyway")
+                logger.warning("Could not select gender — continuing anyway")
 
             await self.page.wait_for_timeout(400)
             return True
 
         except Exception as e:
-            logger.error(f"fill_birthday_gender error: {e}", exc_info=True)
+            logger.error("fill_birthday_gender error: %s", type(e).__name__)
             return True

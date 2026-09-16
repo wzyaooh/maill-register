@@ -12,6 +12,7 @@ import string
 import logging
 import requests
 from config.settings import Config
+from core.secret_safety import safe_proxy_label
 
 logger = logging.getLogger('gmail_creator_proxy')
 
@@ -190,7 +191,8 @@ class ProxyManager:
             self._scores[proxy] = max(0, self._scores[proxy] - (30 if fatal else 10))
             if self._scores[proxy] <= 10:
                 self._health[proxy] = False
-                logger.warning(f"Proxy marked unhealthy ({self._sources.get(proxy, '?')}): {proxy}")
+                logger.warning("Proxy marked unhealthy (%s): %s",
+                               self._sources.get(proxy, "?"), safe_proxy_label(proxy))
                 # Dead KKOIP sessions are cheap to replace — rotate in a new one
                 if self._sources.get(proxy) == SOURCE_KOOIP:
                     self._replace_kooip_session(proxy)
@@ -211,7 +213,8 @@ class ProxyManager:
                 self._health[proxy] = True
                 return True
         except Exception as e:
-            logger.debug(f"Proxy health check failed for {proxy}: {e}")
+            logger.debug("Proxy health check failed for %s: %s",
+                         safe_proxy_label(proxy), type(e).__name__)
         self._health[proxy] = False
         return False
 
@@ -251,7 +254,7 @@ class ProxyManager:
                 "is_datacenter": is_datacenter,
             }
         except Exception as e:
-            logger.warning(f"IP info check failed: {e}")
+            logger.warning("IP info check failed: %s", type(e).__name__)
             return None
 
     def rotate_mobile_ip(self):
@@ -268,7 +271,7 @@ class ProxyManager:
                 return True
             logger.warning(f"IP rotation returned status {resp.status_code}")
         except Exception as e:
-            logger.error(f"Mobile IP rotation failed: {e}")
+            logger.error("Mobile IP rotation failed: %s", type(e).__name__)
         return False
 
     @staticmethod
@@ -317,7 +320,12 @@ class ProxyManager:
                 "healthy": sum(1 for p in self._kooip_proxies if self._health.get(p, True)),
                 "enabled": getattr(Config, 'KOOIP_ENABLED', False),
             },
-            "scores": {p: self._scores.get(p, 0) for p in all_proxies[:10]},
+            # Endpoint labels are useful for diagnostics; credentials never
+            # cross the task/API boundary as dictionary keys.
+            "scores": {
+                safe_proxy_label(proxy): self._scores.get(proxy, 0)
+                for proxy in all_proxies[:10]
+            },
         }
 
 

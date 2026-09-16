@@ -71,7 +71,7 @@ class CaptchaSolver:
                 time.sleep(5)
 
         except Exception as e:
-            logger.error(f"2Captcha error: {e}")
+            logger.error("2Captcha error: %s", type(e).__name__)
         return None
 
     @staticmethod
@@ -116,7 +116,7 @@ class CaptchaSolver:
                 time.sleep(5)
 
         except Exception as e:
-            logger.error(f"Anti-Captcha error: {e}")
+            logger.error("Anti-Captcha error: %s", type(e).__name__)
         return None
 
     @staticmethod
@@ -161,5 +161,5 @@ class CaptchaSolver:
                 time.sleep(5)
 
         except Exception as e:
-            logger.error(f"CapMonster error: {e}")
+            logger.error("CapMonster error: %s", type(e).__name__)
         return None

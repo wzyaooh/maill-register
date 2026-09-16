@@ -13,6 +13,25 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config.settings import Config
 from core.phone_bypass import handle_verification
 from core.retry_engine import retry_engine, CreationError
+from core.profile_runtime import (
+    BrowserProfileKernel,
+    ProfileRuntime,
+    ProfileRuntimeError,
+    classify_session_auth,
+    registration_cleanup_verified,
+    release_registration_lease,
+)
+from core.operation_result import coerce_creation_result
+from core.secret_safety import (
+    SMS_ERROR_CODES,
+    has_durable_sms_context,
+    normalize_error_code,
+    normalize_flow_mode,
+    normalize_sms_service,
+    normalize_verification_method,
+    safe_registration_result_summary,
+    safe_warm_result_summary,
+)
 
 try:
     from core.stealth_browser import PlaywrightStealthManager
@@ -26,6 +45,24 @@ except ImportError:
 
 logger = logging.getLogger('gmail_creator_runners')
 
+# The current native flow cannot return a verified email or persist the same
+# account/profile binding as the desktop adapters.  Keep it explicitly
+# disabled until that contract is implemented end to end.
+APPIUM_SUPPORTED = False
+
+
+def _verification_failure_code(method):
+    """Map a finite verification outcome to the durable creation protocol."""
+    normalized = normalize_verification_method(method)
+    if normalized in SMS_ERROR_CODES:
+        return normalize_error_code(
+            normalized, default=CreationError.PHONE_REQUIRED,
+            allow_empty=False,
+        )
+    if "qr" in normalized:
+        return CreationError.QR_BLOCKED
+    return CreationError.PHONE_REQUIRED
+
 
 def _update_progress(progress, task, **kwargs):
     if progress is not None and task is not None:
@@ -34,6 +71,12 @@ def _update_progress(progress, task, **kwargs):
 
 def run_appium_flow(i, num_accounts, username, first_name, last_name, password,
                     month, day, year, gender, progress, account_task):
+    if not APPIUM_SUPPORTED:
+        logger.warning(
+            "Appium account creation is unsupported until verified account persistence is implemented"
+        )
+        return False
+
     if AppiumManager is None:
         logger.error("Appium is not installed. Install with: pip install Appium-Python-Client")
         return False
@@ -68,7 +111,7 @@ def run_appium_flow(i, num_accounts, username, first_name, last_name, password,
         _update_progress(progress, account_task, completed=100, description="Account Created (Appium)!")
         return True
     except Exception as e:
-        logger.error(f"Appium flow failed: {e}")
+        logger.error("Appium flow failed: %s", type(e).__name__)
         return False
     finally:
         manager.close()
@@ -146,7 +189,9 @@ async def _google_prewarm(page):
             await page.wait_for_timeout(random.randint(2000, 5000))
             return True
         except Exception as e:
-            logger.debug(f"[PREWARM] Navigation failed for {url}: {e}")
+            # Navigation targets can be supplied by compatibility callers;
+            # keep the URL (including query credentials) out of diagnostics.
+            logger.debug("[PREWARM] Navigation failed: %s", type(e).__name__)
             return False
 
     async def _accept_cookies():
@@ -293,7 +338,34 @@ async def _google_prewarm(page):
         logger.info("[PREWARM] Trust session built successfully.")
 
     except Exception as e:
-        logger.warning(f"[PREWARM] Non-fatal error: {e}")
+        logger.warning("[PREWARM] Non-fatal error: %s", type(e).__name__)
+
+
+async def _registration_session_facts(page, expected_email):
+    """Collect registration proof through the shared profile auth protocol."""
+    try:
+        await page.goto(
+            "https://mail.google.com/", timeout=30000,
+            wait_until="domcontentloaded",
+        )
+        await page.wait_for_timeout(500)
+    except Exception:
+        return classify_session_auth(expected_email=expected_email)
+
+    text = await BrowserProfileKernel._page_text(page)
+    observed_email = await BrowserProfileKernel._playwright_identity(page)
+    application_shell = await BrowserProfileKernel._playwright_application_shell(page)
+    cookies = []
+    try:
+        cookies = await page.context.cookies()
+    except Exception:
+        pass
+    return classify_session_auth(
+        text=text, cookies=cookies, observed_email=observed_email,
+        expected_email=expected_email, manifest={},
+        origin=getattr(page, "url", ""),
+        application_shell=application_shell,
+    )
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -302,15 +374,46 @@ async def _google_prewarm(page):
 async def async_playwright_flow(i, num_accounts, username, first_name, last_name,
                                  password, progress, account_task, proxy,
                                  month, day, year, gender,
-                                 use_sms_api=False, flow_mode="standard"):
+                                 use_sms_api=False, flow_mode="standard", *,
+                                 job_id="", attempt_id="", order_store=None):
+    flow_mode = normalize_flow_mode(flow_mode)
     _update_progress(progress, account_task, completed=5, description="Starting Playwright Stealth flow...")
     manager = PlaywrightStealthManager()
+    runtime = ProfileRuntime.from_environment()
+    profile_handle = None
+    profile_manifest = None
+    profile_lease = None
+    lease_released = False
+    profile_ready = False
+    manager_closed = False
+    cleanup_failure_reason = ""
+    enclosing_result = None
+    registration_result = {
+        "success": False,
+        "status": "failed",
+        "error_code": "",
+    }
+    warm_result = {}
 
     try:
+        # A registration profile is provisioned and exclusively leased before
+        # Chromium is started.  Its random id, native identity, and proxy
+        # binding become the durable source of truth for later warm/health runs.
+        profile_handle = runtime.provision("", "playwright", proxy=proxy)
+        profile_manifest = runtime.load(profile_handle)
+        profile_lease = runtime.lease(profile_handle, "registration")
+        profile_lease.acquire()
+        profile_lease.assert_stable()
+
         # ── Initialize browser ────────────────────────────────────────────
-        if not await manager.initialize(proxy=proxy, is_premium=use_sms_api):
+        if not await manager.initialize(proxy=proxy, is_premium=use_sms_api,
+                                        profile_path=str(profile_handle.path),
+                                        profile_manifest=profile_manifest,
+                                        lease_owned=True, profile_lease=profile_lease,
+                                        purpose="registration"):
             logger.error("PlaywrightStealthManager.initialize() returned False")
             return False, CreationError.BROWSER_CRASH
+        runtime.record_runtime(profile_handle, manager.get_runtime_info())
 
         page = manager.page
         is_mobile = getattr(manager, 'is_mobile', False)
@@ -368,7 +471,7 @@ async def async_playwright_flow(i, num_accounts, username, first_name, last_name
                     page_url = page.url.lower()
 
                     if any(sig in page_content for sig in ERROR_PAGE_SIGNALS):
-                        logger.warning(f"Error page detected on URL #{url_idx+1}: {url[:60]}...")
+                        logger.warning("Error page detected on signup target #%s", url_idx + 1)
                         _update_progress(progress, account_task,
                                         description=f"[yellow]Error page detected, trying alternate URL...[/]")
                         await page.wait_for_timeout(random.randint(3000, 6000))
@@ -381,7 +484,7 @@ async def async_playwright_flow(i, num_accounts, username, first_name, last_name
                         continue
 
                     if "accounts.google.com/v3/signin/rejected" in page_url or "accounts.google.com/speedbump" in page_url:
-                        logger.warning(f"Rejected/speedbump page on URL #{url_idx+1}")
+                        logger.warning("Rejected/speedbump page on signup target #%s", url_idx + 1)
                         await page.wait_for_timeout(random.randint(3000, 6000))
                         continue
                 except Exception:
@@ -392,7 +495,7 @@ async def async_playwright_flow(i, num_accounts, username, first_name, last_name
                     navigated = True
                     break
             except Exception:
-                logger.debug(f"Signup URL #{url_idx+1} failed, trying next...")
+                logger.debug("Signup target #%s failed, trying next...", url_idx + 1)
                 await page.wait_for_timeout(random.randint(2000, 4000))
                 continue
 
@@ -674,11 +777,15 @@ async def async_playwright_flow(i, num_accounts, username, first_name, last_name
             use_sms_api=use_sms_api,
             progress=progress,
             account_task=account_task,
+            job_id=job_id,
+            attempt_id=attempt_id,
+            order_store=order_store,
         )
 
         if should_restart:
             # Escaped verification — need to restart the entire signup flow
-            logger.info(f"Verification escaped ({method}) — restarting signup flow...")
+            method = normalize_verification_method(method)
+            logger.info("Verification escaped (%s) — restarting signup flow...", method)
             _update_progress(progress, account_task, completed=25,
                             description=f"[green]Escaped {method} — restarting from name...[/]")
             await page.wait_for_timeout(1200)
@@ -702,7 +809,7 @@ async def async_playwright_flow(i, num_accounts, username, first_name, last_name
                 ])
                 await page.wait_for_timeout(3000)
             except Exception as e:
-                logger.error(f"Failed to re-enter name after QR escape: {e}")
+                logger.error("Failed to re-enter name after QR escape: %s", type(e).__name__)
                 return False, CreationError.QR_BLOCKED
 
             await manager.fill_birthday_gender(month, day, year, gender)
@@ -753,14 +860,18 @@ async def async_playwright_flow(i, num_accounts, username, first_name, last_name
             success2, method2, _ = await handle_verification(
                 page, is_mobile=is_mobile, use_sms_api=use_sms_api,
                 progress=progress, account_task=account_task,
+                job_id=job_id, attempt_id=attempt_id,
+                order_store=order_store,
             )
+            method2 = normalize_verification_method(method2)
             if not success2:
-                error_type = CreationError.QR_BLOCKED if "qr" in method2 else CreationError.PHONE_REQUIRED
-                return False, error_type
+                return False, _verification_failure_code(method2)
             method = method2
 
+        method = normalize_verification_method(method)
+
         if not success:
-            error_type = CreationError.QR_BLOCKED if "qr" in method else CreationError.PHONE_REQUIRED
+            error_type = _verification_failure_code(method)
             if "send_sms" in method:
                 _update_progress(progress, account_task,
                                 description=f"[bold red]IP flagged — use proxy/VPN[/]")
@@ -824,7 +935,7 @@ async def async_playwright_flow(i, num_accounts, username, first_name, last_name
                         logger.info("Captcha solved and injected successfully")
                         await page.wait_for_timeout(1000)
         except Exception as cap_err:
-            logger.debug(f"Captcha check (non-fatal): {cap_err}")
+            logger.debug("Captcha check (non-fatal): %s", type(cap_err).__name__)
 
         # Click agree/accept/continue buttons (with short timeouts to avoid hanging)
         terms_selectors = [
@@ -852,119 +963,236 @@ async def async_playwright_flow(i, num_accounts, username, first_name, last_name
 
         # ── Step 8: Verify account was actually created ───────────────────
         _update_progress(progress, account_task, completed=95, description="Verifying account creation...")
-
-        account_verified = False
-        try:
-            current_url = page.url.lower()
-            verified_urls = [
-                "myaccount.google.com", "mail.google.com",
-                "accounts.google.com/signin/continue",
-                "youtube.com", "workspace.google.com",
-                "gds.google.com",
-            ]
-            if any(v in current_url for v in verified_urls):
-                account_verified = True
-                logger.info(f"Account verified via URL: {current_url}")
-
-            if not account_verified:
-                content = await page.content()
-                content_lower = content.lower()
-                verified_signals = [
-                    "welcome to google", "مرحبًا بك في google",
-                    "your new account", "حسابك الجديد",
-                    "your google account is ready", "حسابك في google جاهز",
-                    "inbox", "primary", "promotions",
-                    "search mail", "compose",
-                ]
-                if any(s in content_lower for s in verified_signals):
-                    account_verified = True
-                    logger.info("Account verified via page content signals")
-
-            if not account_verified:
-                try:
-                    await page.goto("https://myaccount.google.com/", timeout=15000, wait_until="domcontentloaded")
-                    await page.wait_for_timeout(3000)
-                    my_url = page.url.lower()
-                    my_content = await page.content()
-                    if "myaccount.google.com" in my_url and "sign in" not in my_content.lower():
-                        account_verified = True
-                        logger.info("Account verified via myaccount.google.com navigation")
-                except Exception:
-                    pass
-
-        except Exception as verify_err:
-            logger.debug(f"Verification check error (non-fatal): {verify_err}")
-
-        if not account_verified:
+        account_email = f"{username}@gmail.com"
+        auth_facts = await _registration_session_facts(page, account_email)
+        if not auth_facts.get("authenticated"):
             logger.warning("Could not verify account creation — account may not have been created")
             _update_progress(progress, account_task, completed=100,
                             description="[bold yellow]Unverified — account may not exist[/]")
-            return False, CreationError.UNKNOWN
+            return False, auth_facts.get("code") or CreationError.UNKNOWN
 
         # ── Done ──────────────────────────────────────────────────────────
         _update_progress(progress, account_task, completed=100,
                         description=f"[bold green]SUCCESS: {username}@gmail.com[/]")
         logger.info(f"Account VERIFIED and created: {username}@gmail.com")
 
-        # Save to database
+        # Bind the verified identity before committing the account row.  The
+        # profile cannot become ready until both sides of the binding exist.
         try:
             from core.account_manager import account_manager
-            account_manager.save(
-                email=f"{username}@gmail.com",
+            browser_info = manager.get_runtime_info()
+            runtime.bind(profile_handle, account_email, browser_info)
+            bound_manifest = runtime.load(profile_handle)
+            saved = account_manager.save(
+                email=account_email,
                 password=password,
                 first_name=first_name,
                 last_name=last_name,
                 proxy=proxy or "",
                 strategy=flow_mode,
-                sms_service=method if "sms" in method else "",
+                sms_service=(
+                    normalize_sms_service(method[4:])
+                    if method.startswith("sms_") else ""
+                ),
                 birthday=f"{month}/{day}/{year}",
                 gender=gender,
+                profile_path=str(profile_handle.path),
+                profile_id=profile_handle.profile_id,
+                engine="playwright",
+                profile_state="bound",
+                identity_state=bound_manifest.get("identity_state", "native"),
+                browser_status="authenticated",
+                overall_status="active",
+                registration_result={
+                    "success": True,
+                    "status": "created",
+                    "error_code": "",
+                    "verification_method": method,
+                },
+                warm_result={},
             )
+            if not saved:
+                raise RuntimeError("Unable to persist account/profile binding")
+            runtime.mark_ready(profile_handle)
+            if not account_manager.db.update_profile_state(
+                account_email, "ready", bound_manifest.get("identity_state", "native")
+            ):
+                raise RuntimeError("Unable to persist ready profile state")
+            profile_ready = True
+            registration_result = safe_registration_result_summary({
+                "success": True,
+                "status": "created",
+                "error_code": "",
+                "verification_method": method,
+            })
         except Exception as db_err:
-            logger.error(f"Failed to save account: {db_err}")
+            logger.error("Failed to save account: %s", type(db_err).__name__)
+            return False, CreationError.UNKNOWN
 
-        # Print credentials to console
+        # Report creation without printing account credentials.
         from core.progress import print_success
-        print_success(f"CREATED: {username}@gmail.com | Password: {password}")
+        print_success(f"CREATED: {account_email}")
 
         # Send Telegram notification
         try:
             from core.telegram_notifier import notifier
             notifier.notify_account_created(
-                email=f"{username}@gmail.com",
-                password=password,
+                email=account_email,
                 strategy=flow_mode,
-                proxy=proxy or "",
             )
         except Exception:
             pass
 
-        # Post-creation account warming
+        # Post-creation account warming.  Registration is already durable at
+        # this point; any warm/cleanup failure is recorded separately.
         try:
             if Config.ENABLE_SESSION_WARMING:
                 from core.account_warmer import warm_account_playwright
                 _update_progress(progress, account_task, completed=98,
                                 description="Warming new account...")
-                await warm_account_playwright(f"{username}@gmail.com", password, duration_minutes=2)
+                # Release the registration browser before reopening its persistent
+                # profile from the warmer; Chromium locks a user-data directory.
+                close_result = await manager.close()
+                manager_closed = registration_cleanup_verified(close_result)
+                if not manager_closed:
+                    cleanup_failure_reason = "browser_cleanup_failed"
+                    warm_result = {
+                        "success": False,
+                        "error_code": "cleanup_failed",
+                        "cleanup_status": "failed",
+                        "browser_process_stopped": (
+                            isinstance(close_result, dict)
+                            and close_result.get("browser_process_stopped") is True
+                        ),
+                        "lease_released": False,
+                    }
+                else:
+                    lease_released = release_registration_lease(profile_lease)
+                    if not lease_released:
+                        cleanup_failure_reason = "lease_release_failed"
+                        warm_result = {
+                            "success": False,
+                            "error_code": "cleanup_failed",
+                            "cleanup_status": "failed",
+                            "browser_process_stopped": True,
+                            "lease_released": False,
+                        }
+                    else:
+                        raw_warm_result = await warm_account_playwright(
+                            account_email, password, duration_minutes=2,
+                            profile_id=profile_handle.profile_id, engine="playwright",
+                            proxy=proxy,
+                        )
+                        warm_result = safe_warm_result_summary(raw_warm_result)
+                        if not warm_result.get("success"):
+                            logger.warning(
+                                "Post-registration warming failed: %s",
+                                safe_warm_result_summary(warm_result),
+                            )
+            else:
+                warm_result = {"success": True, "status": "skipped", "error_code": ""}
         except Exception as warm_err:
-            logger.debug(f"Account warming (non-fatal): {warm_err}")
+            logger.debug("Account warming (non-fatal): %s", type(warm_err).__name__)
+            if not manager_closed:
+                cleanup_failure_reason = (
+                    cleanup_failure_reason or "browser_cleanup_failed"
+                )
+            elif not lease_released:
+                cleanup_failure_reason = (
+                    cleanup_failure_reason or "lease_release_failed"
+                )
+            warm_result = {
+                "success": False,
+                "error_code": (
+                    "cleanup_failed"
+                    if not manager_closed or not lease_released else "error"
+                ),
+                "cleanup_status": "failed" if not manager_closed or not lease_released else "completed",
+                "browser_process_stopped": manager_closed,
+                "lease_released": lease_released is True,
+            }
 
-        return True, "success"
+        try:
+            if not account_manager.db.update_operation_results(
+                account_email, warm_result=warm_result
+            ):
+                logger.debug("Unable to persist post-registration warm result")
+        except Exception as persist_err:
+            logger.debug(
+                "Unable to persist post-registration warm result: %s",
+                type(persist_err).__name__,
+            )
+
+        enclosing_result = {
+            "success": True,
+            "error_code": "",
+            "registration_result": registration_result,
+            "warm_result": safe_warm_result_summary(warm_result)
+            if warm_result else {},
+        }
 
     except Exception as e:
-        import traceback
-        logger.error(f"Playwright flow failed: {e}", exc_info=True)
+        logger.error("Playwright flow failed: %s", type(e).__name__)
         return False, CreationError.UNKNOWN
     finally:
-        await manager.close()
+        if not manager_closed:
+            try:
+                close_result = await manager.close()
+            except BaseException:
+                close_result = None
+            manager_closed = registration_cleanup_verified(close_result)
+            if not manager_closed:
+                cleanup_failure_reason = "browser_cleanup_failed"
+        if profile_lease is not None and not lease_released:
+            # Never release the profile lock while the browser stop fact is
+            # unknown.  The process boundary will close the descriptor, while
+            # the profile is quarantined below so no new operation can reuse it.
+            if manager_closed and release_registration_lease(profile_lease):
+                lease_released = True
+            elif manager_closed:
+                cleanup_failure_reason = cleanup_failure_reason or "lease_release_failed"
+            else:
+                cleanup_failure_reason = cleanup_failure_reason or "browser_cleanup_failed"
+        if profile_handle is not None:
+            try:
+                if cleanup_failure_reason:
+                    runtime.mark_cleanup_failed(profile_handle, cleanup_failure_reason)
+                elif not profile_ready:
+                    runtime.mark_orphaned(profile_handle, "registration_failed")
+            except Exception as cleanup_exc:
+                logger.debug(
+                    "Unable to persist registration profile cleanup state: %s",
+                    type(cleanup_exc).__name__,
+                )
+    if cleanup_failure_reason and isinstance(enclosing_result, dict) \
+            and enclosing_result.get("success"):
+        enclosing_result["success"] = False
+        enclosing_result["error_code"] = "cleanup_failed"
+    return enclosing_result
 
 
 def run_playwright_flow(i, num_accounts, username, first_name, last_name, password,
                         progress, account_task, proxy,
                         month=None, day=None, year=None, gender=None,
-                        use_sms_api=False, flow_mode="standard"):
+                        use_sms_api=False, flow_mode="standard", *,
+                        job_id="", attempt_id="", order_store=None,
+                        return_result=False):
+    flow_mode = normalize_flow_mode(flow_mode)
     if PlaywrightStealthManager is None:
         logger.error("Playwright is not installed. Install with: pip install playwright && playwright install")
+        return False
+    if use_sms_api and not has_durable_sms_context(job_id, attempt_id, order_store):
+        error_code = "sms_missing_attempt_context"
+        retry_engine.record_attempt(flow_mode, False, error_code)
+        if return_result:
+            return {
+                "success": False,
+                "error_code": error_code,
+                "registration_result": safe_registration_result_summary({
+                    "success": False, "status": "failed", "error_code": error_code,
+                }),
+                "warm_result": {},
+            }
         return False
     if month is None or day is None or year is None:
         b = getattr(Config, "YOUR_BIRTHDAY", "2 4 1990")
@@ -976,13 +1204,39 @@ def run_playwright_flow(i, num_accounts, username, first_name, last_name, passwo
         i, num_accounts, username, first_name, last_name, password,
         progress, account_task, proxy, month, day, year, gender,
         use_sms_api, flow_mode,
+        job_id=job_id, attempt_id=attempt_id, order_store=order_store,
     ))
 
-    if isinstance(result, tuple):
-        success, error_or_method = result
-        if success:
-            retry_engine.record_attempt(flow_mode, True)
-        else:
-            retry_engine.record_attempt(flow_mode, False, error_or_method)
-        return success
-    return result
+    success, error_or_method = coerce_creation_result(result)
+    if success:
+        retry_engine.record_attempt(flow_mode, True)
+    else:
+        retry_engine.record_attempt(flow_mode, False, error_or_method)
+    if return_result:
+        if isinstance(result, dict):
+            payload = dict(result)
+            payload["success"] = success
+            payload["error_code"] = error_or_method
+            payload["registration_result"] = safe_registration_result_summary(
+                payload.get("registration_result") or {
+                    "success": success,
+                    "status": "created" if success else "failed",
+                    "error_code": error_or_method,
+                }
+            )
+            if "warm_result" in payload and payload.get("warm_result"):
+                payload["warm_result"] = safe_warm_result_summary(payload["warm_result"])
+            else:
+                payload["warm_result"] = {}
+            return payload
+        return {
+            "success": success,
+            "error_code": error_or_method,
+            "registration_result": safe_registration_result_summary({
+                "success": success,
+                "status": "created" if success else "failed",
+                "error_code": error_or_method,
+            }),
+            "warm_result": {},
+        }
+    return success
