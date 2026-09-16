@@ -174,7 +174,11 @@ class EnvironmentTests(unittest.TestCase):
 
     def test_dev_server_is_local_without_debugger_or_process_reload(self):
         application = Mock()
-        application.extensions = {"web_tasks": Mock()}
+        configuration = Mock()
+        configuration.compensation_scheduler_settings.return_value = {"enabled": False}
+        application.extensions = {
+            "web_tasks": Mock(), "web_configuration": configuration,
+        }
         application.config = {}
         with patch("web.server.ROOT", self.project), patch("web.server.os.chdir"), \
                 patch.object(sys, "argv", ["app", "--env", "dev"]), \
@@ -193,7 +197,11 @@ class EnvironmentTests(unittest.TestCase):
 
     def test_production_uses_waitress_and_isolated_data(self):
         application = Mock()
-        application.extensions = {"web_tasks": Mock()}
+        configuration = Mock()
+        configuration.compensation_scheduler_settings.return_value = {"enabled": False}
+        application.extensions = {
+            "web_tasks": Mock(), "web_configuration": configuration,
+        }
         with patch("web.server.ROOT", self.project), patch("web.server.os.chdir"), \
                 patch.object(sys, "argv", ["app", "--env", "prod"]), \
                 patch("web.app.create_app", return_value=application) as factory, \

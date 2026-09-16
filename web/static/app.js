@@ -14,13 +14,14 @@
   };
   const taskStatuses = {
     running: ["运行中", "info"], stopping: ["停止中", "warning"], completed: ["执行完成", "success"],
-    failed: ["失败", "danger"], cancelled: ["已取消", "neutral"], interrupted: ["已中断", "warning"],
+    failed: ["失败", "danger"], cleanup_failed: ["清理失败", "danger"], cancelled: ["已取消", "neutral"], interrupted: ["已中断", "warning"],
   };
   const accountStatuses = {
     active: ["可用", "success"], disabled: ["已停用", "danger"], suspended: ["已暂停", "warning"],
     banned: ["已封禁", "danger"], locked: ["已锁定", "warning"], pending: ["待验证", "warning"],
     inactive: ["不可用", "neutral"], unknown: ["未知", "neutral"], error: ["检测异常", "danger"],
     network_error: ["网络异常", "warning"], needs_verification: ["需验证", "warning"],
+    degraded: ["部分可用", "warning"], password_changed: ["密码已变更", "danger"],
   };
   const engineLabels = { playwright: "Playwright", selenium: "Selenium", appium: "Appium" };
   const modeLabels = { ghost: "Ghost", premium: "Premium", youtube: "YouTube", workspace: "Workspace" };
@@ -70,17 +71,27 @@
   const systemNoteLabels = {
     "Dependency discovery does not verify browser binaries or external services.": "依赖可发现不代表浏览器二进制已安装，也不代表外部服务已连通。",
     "Appium port availability does not verify a connected Android device.": "Appium 端口可达不代表已连接 Android 设备。",
-    "Appium's existing flow is incomplete and does not persist a verified account.": "现有 Appium 流程未完成，不会保存创建账号。",
+    "Appium registration is explicitly disabled until the native lifecycle contract is complete.": "Appium 创建已显式禁用；补齐原生生命周期契约前不会启动设备或创建账号。",
     "Proxy/behavior options reflect existing engine capabilities; not all engines use every option.": "代理与行为选项反映现有引擎能力，并非每个引擎都会使用所有选项。",
     "Use HTTPS for remote access; configure WEB_COOKIE_SECURE=true behind TLS.": "远程访问请使用 HTTPS，并在 TLS 反向代理后设置 WEB_COOKIE_SECURE=true。",
   };
+  const capabilityLabels = {
+    user_agent: "User-Agent", viewport: "视口", locale: "语言区域",
+    accept_language: "Accept-Language", timezone: "时区", geolocation: "地理位置",
+    browser_channel_version: "浏览器渠道 / 版本", persistent_storage: "持久化存储",
+    proxy_endpoint: "代理出口", proxy_credentials: "代理认证",
+  };
+  const capabilityStatusLabels = {
+    native: ["原生", "success"], best_effort: ["尽力而为", "warning"],
+    unsupported: ["不支持", "danger"], not_verified: ["未验证", "neutral"],
+  };
   const state = {
     page: "", overview: null, tasks: [], tasksLoaded: false, selectedTaskId: null, selectedTask: null,
-    accounts: [], accountsLoaded: false, selectedAccounts: new Set(), passwords: new Map(),
+    accounts: [], accountsLoaded: false, selectedAccounts: new Set(),
     settingsLoaded: false, settingsLoading: false, settingsSaving: false, settingsControls: new Map(),
     savedSettings: [], proxyCheckId: null,
     resourceKind: "names", resources: {}, system: null, session: null, sessionUnreadable: false,
-    engineInitialized: false, engineTouched: false, warmEngineTouched: false,
+    engineInitialized: false, engineTouched: false,
     polling: false, pollTimer: null, redirecting: false, taskRevision: 0, sessionRevision: 0,
   };
   const pendingGets = new Map();
@@ -192,7 +203,6 @@
       });
       if (response.status === 401) {
         state.redirecting = true;
-        clearPasswords();
         window.location.assign("/login");
         throw new Error("登录已过期，正在返回登录页。");
       }
@@ -291,7 +301,6 @@
   async function showPage({ focus = true } = {}) {
     const requested = window.location.hash.slice(1);
     const page = Object.hasOwn(pages, requested) ? requested : "overview";
-    if (state.page === "accounts" && page !== "accounts") clearPasswords();
     state.page = page;
     Object.keys(pages).forEach((key) => { $(`page-${key}`).hidden = key !== page; });
     document.querySelectorAll("[data-page]").forEach((link) => {
@@ -350,7 +359,6 @@
     setText("engine-badge", `默认 ${engineLabels[data.engine] || text(data.engine)}`);
     if (!state.engineInitialized) {
       if (!state.engineTouched && Object.hasOwn(engineLabels, data.engine)) $("create-engine").value = data.engine;
-      if (!state.warmEngineTouched) $("warm-engine").value = data.engine === "selenium" ? "selenium" : "playwright";
       state.engineInitialized = true;
       if (!Object.hasOwn(engineLabels, data.engine)) {
         $("create-engine").placeholder = "默认引擎无效，请手动选择";
@@ -557,7 +565,7 @@
     setText("summary-engine", engineLabels[engine] || "请选择引擎");
     setText("summary-count", `${$("create-count").value || "—"} 个账号`);
     setText("summary-parallel", $("create-parallel").checked ? `${$("create-threads").value || "—"} 线程并行` : "顺序执行");
-    disable("create-submit", !Object.hasOwn(engineLabels, engine));
+    disable("create-submit", appium || !Object.hasOwn(engineLabels, engine));
   }
 
   async function submitCreation(event) {
@@ -573,11 +581,10 @@
       use_sms_api: $("create-sms").checked, parallel,
       max_threads: parallel ? Number($("create-threads").value) : 3,
     };
-    if (params.engine === "appium" && !(await UI.confirm({
-      title: "Appium 流程尚未完成",
-      message: "Appium 现有创建流程尚未完成，不会保存创建账号。\n请确认外部 Appium 服务和设备已准备好。仍要启动吗？",
-      confirmText: "仍要启动", tone: "warning",
-    }))) return;
+    if (params.engine === "appium") {
+      notify("Appium 创建已禁用；当前版本不会启动设备或创建账号。", "error");
+      return;
+    }
     if (params.parallel && !(await UI.confirm({
       title: "确认启动并行批次",
       message: "并行批次不支持断点恢复，并且需要预先配置固定密码（YOUR_PASSWORD 或 config/password.txt）。\n请确认已准备好；中断后需手动检查已保存账号。确定启动？",
@@ -598,7 +605,9 @@
     const status = $("account-status-filter").value;
     return state.accounts.filter((account) => {
       const haystack = [account.id, account.email, account.first_name, account.last_name, account.strategy,
-        account.status, account.notes, account.birthday, account.gender].map(text).join(" ").toLocaleLowerCase();
+        account.status, account.notes, account.birthday, account.gender, account.engine,
+        account.profile_state, account.browser_status, account.mailbox_status]
+        .map(text).join(" ").toLocaleLowerCase();
       return (!status || account.status === status) && (!query || haystack.includes(query));
     });
   }
@@ -636,9 +645,13 @@
           el("div", "account-name", `${[account.first_name, account.last_name].filter(Boolean).join(" ") || "未设置姓名"} · #${id}`));
         const status = el("td");
         status.append(badge(account.status || "unknown", accountStatuses));
-        const password = el("td", "password-cell");
-        password.dataset.passwordCell = id;
-        fillPasswordCell(password, account);
+        const runtime = el("td", "account-runtime");
+        runtime.append(
+          el("div", "account-runtime-engine", engineLabels[account.engine] || text(account.engine || "未绑定")),
+          el("div", "field-help", `Profile：${text(account.profile_state || "未配置")}`),
+          el("div", "field-help", `浏览器：${accountStatuses[account.browser_status]?.[0] || text(account.browser_status || "未检测")}`),
+          el("div", "field-help", `邮箱：${accountStatuses[account.mailbox_status]?.[0] || text(account.mailbox_status || "未检测")}`),
+        );
         const genders = { "1": "男", "2": "女", "3": "其他" };
         const details = UI.disclosure("查看资料", [
           el("div", "", `生日：${text(account.birthday)}`),
@@ -648,8 +661,8 @@
         details.dataset.accountDetail = id;
         const detailCell = el("td");
         detailCell.append(details);
-        row.append(selectCell, identity, status, el("td", "", account.strategy),
-          el("td", "", formatDate(account.created_at)), password, detailCell);
+        row.append(selectCell, identity, status, runtime, el("td", "", account.strategy),
+          el("td", "", formatDate(account.created_at)), detailCell);
         return row;
       });
       if (!nodes.length) {
@@ -681,53 +694,6 @@
     disable("clear-selection", state.selectedAccounts.size === 0);
   }
 
-  function fillPasswordCell(cell, account) {
-    const revealed = state.passwords.get(Number(account.id));
-    const value = el("span", "password-value", revealed ? revealed.value : account.has_password ? "••••••••" : "未保存密码");
-    const button = el("button", "button quiet small", revealed ? "隐藏密码" : "显示密码");
-    button.type = "button";
-    button.dataset.passwordId = account.id;
-    button.disabled = !account.has_password;
-    button.setAttribute("aria-label", `${revealed ? "隐藏" : "显示"} ${account.email} 的密码`);
-    cell.replaceChildren(value, button);
-  }
-
-  function refreshPasswordCell(id) {
-    const account = state.accounts.find((item) => Number(item.id) === id);
-    const cell = $("account-rows").querySelector(`[data-password-cell="${id}"]`);
-    if (account && cell) fillPasswordCell(cell, account);
-  }
-
-  function hidePassword(id) {
-    const revealed = state.passwords.get(id);
-    if (revealed) window.clearTimeout(revealed.timer);
-    state.passwords.delete(id);
-    refreshPasswordCell(id);
-  }
-
-  function clearPasswords() {
-    const ids = [...state.passwords.keys()];
-    ids.forEach(hidePassword);
-  }
-
-  async function revealPassword(id, button) {
-    if (state.passwords.has(id)) {
-      hidePassword(id);
-      return;
-    }
-    if (!(await UI.confirm({
-      title: "显示明文密码",
-      message: "即将读取并显示该账号的明文密码，30 秒后自动隐藏。\n请确认周围环境可信，避免录屏或分享。",
-      confirmText: "显示密码", tone: "warning",
-    }))) return;
-    await perform(button, async () => {
-      const data = await api(`/api/accounts/${id}/password`, { method: "POST", body: {} });
-      if (state.page !== "accounts" || document.hidden) return;
-      state.passwords.set(id, { value: data.password, timer: window.setTimeout(() => hidePassword(id), 30000) });
-      refreshPasswordCell(id);
-    });
-  }
-
   function selectedAccountScope() {
     return state.selectedAccounts.size
       ? `已选择的 ${state.selectedAccounts.size} 个账号`
@@ -736,7 +702,7 @@
 
   async function runAccountTask(action, button) {
     if (action === "warm" && !UI.validate($("warm-form"))) return;
-    const method = action === "health" ? "通过 IMAP 检查登录状态" : "在服务器启动浏览器";
+    const method = action === "health" ? "检查浏览器会话与 IMAP 状态" : "在服务器启动注册时记录的浏览器";
     if (!(await UI.confirm({
       title: `确认执行${actionLabels[action]}`,
       message: `确定对${selectedAccountScope()}执行${actionLabels[action]}？\n此操作会使用账号密码并${method}。`,
@@ -744,7 +710,6 @@
     }))) return;
     const params = { account_ids: [...state.selectedAccounts] };
     if (action === "warm") {
-      params.engine = $("warm-engine").value;
       params.duration_minutes = Number($("warm-duration").value);
     }
     await perform(button, () => startTask(action, params));
@@ -754,8 +719,8 @@
     const format = $("export-format").value;
     if (!(await UI.confirm({
       title: "导出全部账号",
-      message: `即将导出全部 ${state.accounts.length} 个账号为 ${format.toUpperCase()}，不受筛选或勾选影响。\n文件包含明文密码及敏感资料，请仅保存到可信设备。确定继续？`,
-      confirmText: "确定导出", tone: "danger",
+      message: `即将导出全部 ${state.accounts.length} 个账号为 ${format.toUpperCase()}，不受筛选或勾选影响。\n文件只包含非敏感账号资料。确定继续？`,
+      confirmText: "确定导出", tone: "primary",
     }))) return;
     await perform($("account-export"), async () => {
       const blob = await api("/api/accounts/export", { method: "POST", body: { format }, blob: true });
@@ -767,7 +732,7 @@
       link.click();
       link.remove();
       window.setTimeout(() => URL.revokeObjectURL(url), 60000);
-      notify("已开始下载。文件含明文密码，请妥善保存并及时清理共享设备上的副本。");
+      notify("已开始下载。文件只包含非敏感账号资料。");
     });
   }
 
@@ -1190,6 +1155,8 @@
     setText("system-python", `Python ${text(data.python)}`);
     setText("system-appium", data.appium_available ? "端口可达 · 未验证设备" : "端口不可达");
     setText("system-voice", data.voice_running ? "任务运行中 · 未验证端口" : "未运行");
+    setText("system-smoke-status", data.browser_smoke_opt_in ? "Smoke 已启用" : "Smoke 未启用");
+    $("system-smoke-status").className = `pill${data.browser_smoke_opt_in ? " success" : ""}`;
     if (changed("system-dependencies", data.dependencies)) {
       const nodes = Object.entries(data.dependencies || {}).map(([name, available]) => {
         const item = el("div", "dependency-item");
@@ -1197,6 +1164,33 @@
         return item;
       });
       $("system-dependencies").replaceChildren(...nodes);
+    }
+    if (changed("system-capabilities", data.browser_capabilities)) {
+      const rows = [];
+      Object.entries(data.browser_capabilities || {}).forEach(([engine, capabilities]) => {
+        Object.entries(capabilities || {}).forEach(([key, capability]) => {
+          const status = capabilityStatusLabels[capability.status] || [text(capability.status), "neutral"];
+          const row = el("tr");
+          const statusCell = el("td");
+          statusCell.append(el("span", `badge ${status[1]}`, status[0]));
+          row.append(
+            el("td", "capability-engine", engineLabels[engine] || engine),
+            el("td", "capability-name", capabilityLabels[key] || key),
+            statusCell,
+            el("td", "", capability.verified ? "已验证" : "未验证"),
+          );
+          rows.push(row);
+        });
+      });
+      $("system-capability-rows").replaceChildren(...(rows.length ? rows : [
+        (() => {
+          const row = el("tr");
+          const cell = el("td", "empty-state", "暂无能力矩阵");
+          cell.colSpan = 4;
+          row.append(cell);
+          return row;
+        })(),
+      ]));
     }
     if (changed("system-notes", data.notes)) {
       $("system-notes").replaceChildren(...(data.notes || []).map((note) => el("li", "", systemNoteLabels[note] || text(note))));
@@ -1334,8 +1328,7 @@
   });
   window.addEventListener("hashchange", () => report(showPage()));
   document.addEventListener("visibilitychange", () => {
-    if (document.hidden) clearPasswords();
-    else report(poll());
+    if (!document.hidden) report(poll());
   });
   window.addEventListener("beforeunload", (event) => {
     if (dirtySettings().length || Object.values(state.resources).some((resource) => resource.dirty)) {
@@ -1387,17 +1380,12 @@
     else state.selectedAccounts.delete(id);
     updateSelection();
   });
-  $("account-rows").addEventListener("click", (event) => {
-    const button = event.target.closest("[data-password-id]");
-    if (button) report(revealPassword(Number(button.dataset.passwordId), button));
-  });
   $("clear-selection").addEventListener("click", () => {
     state.selectedAccounts.clear();
     updateSelection();
   });
   $("account-health").addEventListener("click", () => report(runAccountTask("health", $("account-health"))));
   $("account-export").addEventListener("click", () => report(exportAccounts()));
-  $("warm-engine").addEventListener("change", () => { state.warmEngineTouched = true; });
   $("warm-form").addEventListener("submit", (event) => {
     event.preventDefault();
     report(runAccountTask("warm", $("account-warm")));

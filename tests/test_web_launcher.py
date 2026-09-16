@@ -19,7 +19,12 @@ class WebLauncherTests(unittest.TestCase):
         for arguments in ([], ["--web"], ["--host", "127.0.0.1", "--port", "8088"]):
             with self.subTest(arguments=arguments):
                 manager = Mock()
-                application = SimpleNamespace(extensions={"web_tasks": manager})
+                configuration = Mock()
+                configuration.compensation_scheduler_settings.return_value = {"enabled": False}
+                application = SimpleNamespace(extensions={
+                    "web_tasks": manager,
+                    "web_configuration": configuration,
+                })
                 lock = Mock()
                 with patch.object(sys, "argv", ["auto_gmail_creator.py", *arguments]), \
                         patch("web.server.os.chdir"), \
@@ -34,6 +39,32 @@ class WebLauncherTests(unittest.TestCase):
                                               port=8088 if "--port" in arguments else 8080, threads=8)
                 manager.close.assert_called_once()
                 lock.close.assert_called_once()
+
+    def test_launcher_owns_scheduler_start_and_stop(self):
+        manager = Mock()
+        configuration = Mock()
+        application = SimpleNamespace(extensions={
+            "web_tasks": manager,
+            "web_configuration": configuration,
+        })
+        scheduler = Mock()
+        scheduler.stop.return_value = True
+        lock = Mock()
+        with patch.object(sys, "argv", ["auto_gmail_creator.py"]), \
+                patch("web.server.os.chdir"), \
+                patch("web.server.lock_server", return_value=lock), \
+                patch("web.app.create_app", return_value=application), \
+                patch("web.server.CompensationSchedulerSupervisor", return_value=scheduler) as owner, \
+                patch("waitress.serve"), \
+                patch("web.server.atexit.register"), \
+                redirect_stdout(io.StringIO()):
+            main()
+
+        owner.assert_called_once_with(ROOT, configuration)
+        scheduler.start.assert_called_once_with()
+        scheduler.stop.assert_called_once_with()
+        manager.close.assert_called_once_with()
+        lock.close.assert_called_once_with()
 
     def test_primary_script_and_module_delegate_to_web_launcher(self):
         with patch("web.server.main") as launch:

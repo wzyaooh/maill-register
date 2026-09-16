@@ -22,15 +22,52 @@ RESOURCE_KEYS = {
     "names": ("NAMES_FILE", "data/names.txt"),
     "user_agents": ("USER_AGENTS_FILE", "config/user_agents.txt"),
 }
+SCHEDULER_INTEGER_BOUNDS = {
+    "COMPENSATION_SCHEDULER_INTERVAL_SECONDS": (1, 86400),
+    "COMPENSATION_SCHEDULER_LIMIT": (1, 1000),
+    "COMPENSATION_SCHEDULER_MAX_ATTEMPTS": (1, 20),
+    "COMPENSATION_SCHEDULER_BACKOFF_SECONDS": (0, 86400),
+    "COMPENSATION_SCHEDULER_TIME_BUDGET_SECONDS": (1, 300),
+}
+SCHEDULER_SETTING_NAMES = {
+    "COMPENSATION_SCHEDULER_INTERVAL_SECONDS": "interval_seconds",
+    "COMPENSATION_SCHEDULER_LIMIT": "limit",
+    "COMPENSATION_SCHEDULER_MAX_ATTEMPTS": "max_attempts",
+    "COMPENSATION_SCHEDULER_BACKOFF_SECONDS": "backoff_seconds",
+    "COMPENSATION_SCHEDULER_TIME_BUDGET_SECONDS": "time_budget_seconds",
+}
+
+
+def parse_compensation_scheduler_settings(values):
+    enabled_key = "COMPENSATION_SCHEDULER_ENABLED"
+    enabled_value = str(values[enabled_key]).strip().lower()
+    if enabled_value not in ("true", "false"):
+        raise ValueError(enabled_key + " must be true or false")
+    settings = {"enabled": enabled_value == "true"}
+    for key, name in SCHEDULER_SETTING_NAMES.items():
+        raw = str(values[key]).strip()
+        try:
+            parsed = int(raw)
+        except (TypeError, ValueError):
+            raise ValueError(key + " must be an integer") from None
+        low, high = SCHEDULER_INTEGER_BOUNDS[key]
+        if not low <= parsed <= high:
+            raise ValueError(key + " is outside the supported range")
+        settings[name] = parsed
+    return settings
 
 
 def is_secret(key):
-    return any(word in key for word in ("PASSWORD", "TOKEN", "API_KEY", "AUTH_NAME", "USER_ID"))
+    normalized = str(key).upper()
+    return normalized in {"MOBILE_PROXY_IP_CHANGE_URL"} or any(
+        word in normalized for word in ("PASSWORD", "TOKEN", "API_KEY", "AUTH_NAME", "USER_ID")
+    )
 
 
 def group_for(key):
     for prefixes, group in (
         (("FIVESIM", "SMS_", "ONLINESIM", "GETSMS"), "SMS"),
+        (("COMPENSATION_SCHEDULER_",), "SMS"),
         (("TWOCAPTCHA", "ANTICAPTCHA", "CAPMONSTER"), "CAPTCHA"),
         (("KOOIP",), "KooIP"),
         (("PROXY", "ENABLE_PROXY", "ROTATE_PROXY", "MOBILE_PROXY"), "Proxy"),
@@ -95,6 +132,9 @@ class Configuration:
         self.validate_paths(values)
         return values
 
+    def compensation_scheduler_settings(self):
+        return parse_compensation_scheduler_settings(self.values())
+
     def validate_paths(self, values):
         if not self.isolated:
             return
@@ -143,7 +183,8 @@ class Configuration:
                     value = str(int(value))
                 except ValueError:
                     raise ValueError(key + " must be an integer") from None
-                if not 0 <= int(value) <= 86400000:
+                low, high = SCHEDULER_INTEGER_BOUNDS.get(key, (0, 86400000))
+                if not low <= int(value) <= high:
                     raise ValueError(key + " is outside the supported range")
             elif not isinstance(value, str):
                 raise ValueError(key + " must be text")

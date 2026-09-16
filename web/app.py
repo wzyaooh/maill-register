@@ -3,6 +3,7 @@ import csv
 import importlib.util
 import io
 import json
+import logging
 import os
 import re
 import secrets
@@ -19,6 +20,15 @@ from werkzeug.exceptions import HTTPException
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from core.database import DatabaseManager
+from core.browser_capabilities import capability_report, get_capability_matrix
+from core.profile_runtime import ProfileRuntime, proxy_launch_config
+from core.secret_safety import (
+    SAFE_ACCOUNT_EXPORT_FIELDS,
+    redact_text,
+    safe_exception_message,
+    safe_account_metadata_rows,
+    sanitize_operation_value,
+)
 from web.configuration import Configuration, is_secret
 from web.tasks import ACTIVE, TaskManager
 
@@ -28,20 +38,105 @@ ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 
 def redact(value, sensitive):
+    value = sanitize_operation_value(value, sensitive, preserve_sensitive=True)
     if isinstance(value, dict):
-        return {redact(key, sensitive): ("[redacted]" if is_secret(str(key).upper()) and isinstance(item, str)
-                                        else redact(item, sensitive))
-                for key, item in value.items()}
+        return {redact(key, sensitive): redact(item, sensitive) for key, item in value.items()}
     if isinstance(value, list):
         return [redact(item, sensitive) for item in value]
-    if not isinstance(value, str):
-        return value
-    value = ANSI.sub("", value)
-    for secret in sorted(sensitive, key=len, reverse=True):
-        if secret:
-            value = value.replace(secret, "[redacted]")
-    value = re.sub(r"(?i)(password\s*[:=]\s*)[^\s|]+", r"\1[redacted]", value)
+    if isinstance(value, str):
+        return ANSI.sub("", redact_text(value, sensitive))
     return value
+
+
+def _mask_proxy_resource(content):
+    """Keep proxy endpoints useful while removing userinfo from API output."""
+    masked = []
+    for raw_line in str(content or "").splitlines(keepends=True):
+        newline = "\n" if raw_line.endswith("\n") else ""
+        line = raw_line[:-1] if newline else raw_line
+        if not line.strip():
+            masked.append(raw_line)
+            continue
+        if line.lstrip().startswith("#"):
+            # Comments are still returned by the resource API and often carry
+            # copied proxy examples.  Preserve their endpoint so an unchanged
+            # API round-trip can restore the original comment line.
+            masked.append(_mask_proxy_comment(line) + newline)
+            continue
+        config = proxy_launch_config(line.strip())
+        if config and ("username" in config or "password" in config):
+            endpoint = config["server"].split("://", 1)[-1]
+            masked.append(endpoint + ":[redacted]:[redacted]" + newline)
+        else:
+            masked.append(redact_text(line, ()) + newline)
+    return "".join(masked)
+
+
+def _proxy_config_from_token(token):
+    """Parse a proxy token after trimming comment punctuation."""
+    candidate = str(token or "").strip().strip("()[]{}<>,;\"'")
+    config = proxy_launch_config(candidate)
+    if config and ("username" in config or "password" in config):
+        return config
+    return None
+
+
+def _mask_proxy_comment(line):
+    """Mask proxy credentials embedded in a comment while retaining context."""
+    match = re.match(r"^(\s*#\s*)(.*)$", str(line))
+    if not match:
+        return redact_text(line, ())
+    prefix, body = match.groups()
+    # A comment often contains prose before a copied canonical proxy.  Replace
+    # only the token that parses as a proxy and redact any other labelled
+    # credential text through the normal structural sanitizer.
+    pieces = re.split(r"(\s+)", body)
+    changed = False
+    for index, piece in enumerate(pieces):
+        config = _proxy_config_from_token(piece)
+        if not config:
+            pieces[index] = redact_text(piece, ())
+            continue
+        endpoint = config["server"].split("://", 1)[-1]
+        pieces[index] = endpoint + ":[redacted]:[redacted]"
+        changed = True
+    masked = prefix + "".join(pieces)
+    return masked if changed else redact_text(line, ())
+
+
+def _proxy_endpoint_from_line(line):
+    """Find a credential-bearing or masked proxy endpoint in a resource line."""
+    text = str(line or "")
+    stripped = text.strip()
+    comment = stripped.startswith("#")
+    candidates = [stripped]
+    if comment:
+        candidates = [stripped[1:].strip()] + re.split(r"\s+", stripped[1:].strip())
+    for candidate in candidates:
+        config = _proxy_config_from_token(candidate)
+        if config:
+            return config["server"].split("://", 1)[-1], comment
+    return None, comment
+
+
+def _restore_masked_proxy_resource(content, original):
+    """Restore credentials for unchanged masked lines before a resource save."""
+    originals = {}
+    for raw_line in str(original or "").splitlines():
+        endpoint, comment = _proxy_endpoint_from_line(raw_line)
+        if endpoint:
+            originals.setdefault((endpoint, comment), raw_line)
+    restored = []
+    for raw_line in str(content or "").splitlines(keepends=True):
+        newline = "\n" if raw_line.endswith("\n") else ""
+        line = raw_line[:-1] if newline else raw_line
+        endpoint, comment = _proxy_endpoint_from_line(line)
+        if endpoint:
+            original_line = originals.get((endpoint, comment))
+            if original_line is not None and "[redacted]" in line:
+                line = original_line
+        restored.append(line + newline)
+    return "".join(restored)
 
 
 def create_app(root=None, password=None, secret_key=None, environment=None, code_root=None, deployment=None):
@@ -49,8 +144,7 @@ def create_app(root=None, password=None, secret_key=None, environment=None, code
         raise ValueError("Environment must be dev or prod")
     root = Path(root or ROOT).resolve()
     configuration = Configuration(root, environment, code_root=code_root)
-    if configuration.isolated:
-        configuration.values()
+    scheduler_settings = configuration.compensation_scheduler_settings()
     local = {}
     if configuration.path.exists():
         from dotenv import dotenv_values
@@ -72,8 +166,30 @@ def create_app(root=None, password=None, secret_key=None, environment=None, code
     )
     password_hash = generate_password_hash(password, method="pbkdf2:sha256:600000")
     db = DatabaseManager(str(root / "data/database.db"))
+    # Reconcile the filesystem profile registry with the account database at
+    # startup.  This is diagnostic/recoverable: a malformed or stale profile
+    # must be visible to operators, but it must not prevent the web console
+    # from starting and exposing the rest of the account data.
+    profile_runtime = ProfileRuntime(str(root))
+    try:
+        profile_diagnostics = profile_runtime.reconcile(database=db)
+    except Exception as exc:
+        app_logger = logging.getLogger("gmail_creator_web")
+        # Reconciliation errors are operator diagnostics, not a channel for
+        # exception payloads.  Lower layers may include credentials or proxy
+        # userinfo in their messages, so retain only the exception type and a
+        # stable public status.
+        app_logger.warning("Profile reconciliation failed: %s", type(exc).__name__)
+        profile_diagnostics = [{
+            "state": "corrupt", "error_code": "reconciliation_failed",
+            "status": "profile_unavailable", "message": "profile reconciliation failed",
+        }]
     tasks = TaskManager(root, configuration)
-    app.extensions.update(web_configuration=configuration, web_tasks=tasks, web_database=db)
+    app.extensions.update(
+        web_configuration=configuration, web_tasks=tasks, web_database=db,
+        profile_runtime=profile_runtime, profile_diagnostics=profile_diagnostics,
+        compensation_scheduler_settings=scheduler_settings,
+    )
     failures = {}
     auth_lock = threading.Lock()
 
@@ -97,18 +213,20 @@ def create_app(root=None, password=None, secret_key=None, environment=None, code
         resource = configured_path.read_text(encoding="utf-8") if configured_path.is_file() else ""
         items.extend(line.strip() for line in resource.splitlines()
                      if len(line.strip().split(":")) == 4 and not line.lstrip().startswith("#"))
-        return items
+        items.extend(tasks.store._known_secret_values())
+        return tuple(dict.fromkeys(item for item in items if item))
 
     def public(value):
         return redact(value, sensitive_values())
 
     def public_task(task, sensitive=None):
         sensitive = sensitive_values() if sensitive is None else sensitive
-        progress = task["progress"]
+        safe_task = sanitize_operation_value(task, sensitive)
+        progress = safe_task["progress"]
         return {
-            **task,
-            "error": redact(task["error"], sensitive),
-            "result": redact(task["result"], sensitive),
+            **safe_task,
+            "error": redact(safe_task["error"], sensitive),
+            "result": redact(safe_task["result"], sensitive),
             "progress": ({**progress, "message": redact(progress.get("message", ""), sensitive)}
                          if progress else None),
         }
@@ -152,7 +270,13 @@ def create_app(root=None, password=None, secret_key=None, environment=None, code
 
     @app.errorhandler(ValueError)
     def invalid(exc):
-        return jsonify(error=str(exc)), 400
+        try:
+            sensitive = sensitive_values()
+        except Exception:
+            sensitive = ()
+        return jsonify(error=safe_exception_message(
+            exc, sensitive, fallback="Invalid request"
+        )), 400
 
     @app.errorhandler(KeyError)
     def missing(exc):
@@ -160,11 +284,21 @@ def create_app(root=None, password=None, secret_key=None, environment=None, code
 
     @app.errorhandler(HTTPException)
     def http_error(exc):
-        return jsonify(error=exc.description), exc.code
+        try:
+            sensitive = sensitive_values()
+        except Exception:
+            sensitive = ()
+        return jsonify(error=safe_exception_message(
+            getattr(exc, "description", ""), sensitive,
+            fallback="HTTP request failed",
+        )), exc.code
 
     @app.errorhandler(OSError)
     def storage_error(exc):
-        app.logger.exception("Web operation failed")
+        # Logging a traceback here can copy credentials embedded in a driver or
+        # filesystem exception.  Keep only the stable type; the client gets a
+        # generic storage error below.
+        app.logger.warning("Web storage operation failed: %s", type(exc).__name__)
         return jsonify(error="Server I/O operation failed; check server logs"), 500
 
     @app.route("/login", methods=["GET", "POST"])
@@ -207,6 +341,7 @@ def create_app(root=None, password=None, secret_key=None, environment=None, code
     @app.get("/api/overview")
     def overview():
         accounts = db.get_all_accounts()
+        account_metadata = safe_account_metadata_rows(accounts)
         total = len(accounts)
         active = sum(a["status"] == "active" for a in accounts)
         values = configuration.values()
@@ -219,8 +354,13 @@ def create_app(root=None, password=None, secret_key=None, environment=None, code
             item["errors"] = public(item["errors"])
         return jsonify(
             accounts={"total": total, "active": active, "success_rate": active / total * 100 if total else 0,
-                      "strategies": dict(Counter(a["strategy"] or "unknown" for a in accounts)),
-                      "sms_services": dict(Counter(a["sms_service"] for a in accounts if a["sms_service"]))},
+                      "strategies": dict(Counter(
+                          a.get("strategy") or "unknown" for a in account_metadata
+                      )),
+                      "sms_services": dict(Counter(
+                          a.get("sms_service") for a in account_metadata
+                          if a.get("sms_service")
+                      ))},
             sessions=history, tasks=public_tasks(), services=services, engine=values["ENGINE_MODE"],
         )
 
@@ -234,47 +374,77 @@ def create_app(root=None, password=None, secret_key=None, environment=None, code
                 appium_available = True
         except OSError:
             appium_available = False
+        diagnostics = []
+        for item in app.extensions.get("profile_diagnostics", []):
+            if isinstance(item, dict):
+                diagnostics.append({key: value for key, value in item.items() if key != "path"})
+        # The matrix is a public contract, while verification evidence is
+        # deliberately opt-in and local.  Do not infer verification merely
+        # because a Python package is importable or a port is reachable.
+        browser_capabilities = {
+            engine: capability_report(engine)
+            for engine in get_capability_matrix()
+        }
         return jsonify(python=sys.version.split()[0], dependencies=dependencies, environment=deployment or "legacy",
                        appium_available=appium_available,
                        voice_running=any(t["action"] == "voice" for t in tasks.store.active()),
+                       browser_capabilities=browser_capabilities,
+                       browser_smoke_opt_in=os.environ.get("RUN_REAL_BROWSER_SMOKE") == "1",
+                       profiles=diagnostics,
                        notes=[
                            "Dependency discovery does not verify browser binaries or external services.",
                            "Appium port availability does not verify a connected Android device.",
-                           "Appium's existing flow is incomplete and does not persist a verified account.",
+                           "Appium registration is explicitly disabled until the native lifecycle contract is complete.",
                            "Proxy/behavior options reflect existing engine capabilities; not all engines use every option.",
                            "Use HTTPS for remote access; configure WEB_COOKIE_SECURE=true behind TLS.",
                        ])
+
+    @app.get("/api/compensation-scheduler")
+    def compensation_scheduler_status():
+        from web.compensation_scheduler import read_scheduler_status
+
+        stale_after = max(
+            scheduler_settings["interval_seconds"] * 2,
+            scheduler_settings["time_budget_seconds"] * 2,
+            60,
+        )
+        return jsonify(status=read_scheduler_status(
+            root,
+            enabled=scheduler_settings["enabled"],
+            stale_after_seconds=stale_after,
+        ))
 
     @app.get("/api/accounts")
     def accounts():
         rows = []
         for account in db.get_all_accounts():
-            row = {key: value for key, value in account.items() if key not in ("password", "proxy", "phone_number")}
+            # Keep this projection allow-listed.  Free-form columns such as
+            # ``notes`` may contain OTPs or copied service credentials from
+            # legacy imports and must never become API metadata by accident.
+            row = safe_account_metadata_rows([account])[0]
             row["has_password"] = bool(account["password"])
             rows.append(row)
         return jsonify(accounts=rows)
 
     @app.post("/api/accounts/<int:account_id>/password")
     def account_password(account_id):
-        for account in db.get_all_accounts():
-            if account["id"] == account_id:
-                return jsonify(password=account["password"])
-        raise KeyError(account_id)
+        # Credentials are needed by supervised workers, never by the browser
+        # console.  Keep the route as an explicit denial for old clients.
+        return jsonify(error="Password retrieval is disabled"), 403
 
     @app.post("/api/accounts/export")
     def export():
         kind = json_body().get("format")
-        accounts = db.get_all_accounts()
+        accounts = safe_account_metadata_rows(db.get_all_accounts())
         if kind == "json":
             content, mimetype = json.dumps(accounts, ensure_ascii=False, indent=2), "application/json"
         elif kind == "txt":
-            content = "".join(f"{a['email']}:{a['password']}\n" for a in accounts)
+            content = "".join(f"{a.get('email', '')}\n" for a in accounts)
             mimetype = "text/plain"
         elif kind == "csv":
             buffer = io.StringIO()
             writer = csv.writer(buffer)
-            columns = ["email", "password", "first_name", "last_name", "proxy", "strategy",
-                       "sms_service", "status", "created_at"]
+            columns = list(SAFE_ACCOUNT_EXPORT_FIELDS)
             writer.writerow(columns)
             # Prevent spreadsheet formula execution when exported cells are opened.
             writer.writerows([
@@ -308,8 +478,15 @@ def create_app(root=None, password=None, secret_key=None, environment=None, code
         with tasks.lock:
             if request.method == "PUT":
                 require_idle()
-                configuration.save_resource(kind, json_body().get("content"))
-            return jsonify(configuration.read_resource(kind))
+                payload = json_body().get("content")
+                if kind == "proxies":
+                    current = configuration.read_resource(kind)["content"]
+                    payload = _restore_masked_proxy_resource(payload, current)
+                configuration.save_resource(kind, payload)
+            result = configuration.read_resource(kind)
+            if kind == "proxies":
+                result["content"] = _mask_proxy_resource(result["content"])
+            return jsonify(result)
 
     @app.route("/api/session", methods=["GET", "DELETE"])
     def saved_session():

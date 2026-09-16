@@ -39,6 +39,27 @@ class Config:
     GETSMS_API_KEY = os.getenv("GETSMS_API_KEY", "")
     GETSMS_COUNTRY = os.getenv("GETSMS_COUNTRY", "us")
 
+    # Periodic compensation is opt-in. The Web launcher supervises the
+    # separate worker process when explicitly enabled.
+    COMPENSATION_SCHEDULER_ENABLED = os.getenv(
+        "COMPENSATION_SCHEDULER_ENABLED", "False"
+    ).lower() == "true"
+    COMPENSATION_SCHEDULER_INTERVAL_SECONDS = int(os.getenv(
+        "COMPENSATION_SCHEDULER_INTERVAL_SECONDS", "300"
+    ))
+    COMPENSATION_SCHEDULER_LIMIT = int(os.getenv(
+        "COMPENSATION_SCHEDULER_LIMIT", "100"
+    ))
+    COMPENSATION_SCHEDULER_MAX_ATTEMPTS = int(os.getenv(
+        "COMPENSATION_SCHEDULER_MAX_ATTEMPTS", "3"
+    ))
+    COMPENSATION_SCHEDULER_BACKOFF_SECONDS = int(os.getenv(
+        "COMPENSATION_SCHEDULER_BACKOFF_SECONDS", "30"
+    ))
+    COMPENSATION_SCHEDULER_TIME_BUDGET_SECONDS = int(os.getenv(
+        "COMPENSATION_SCHEDULER_TIME_BUDGET_SECONDS", "30"
+    ))
+
     # ═══════════════════════════════════════════════════════════════
     #                  CAPTCHA SERVICES
     # ═══════════════════════════════════════════════════════════════

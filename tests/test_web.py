@@ -5,6 +5,7 @@ import io
 import json
 import os
 import shutil
+import sqlite3
 import stat
 import subprocess
 import sys
@@ -115,6 +116,62 @@ class WebFixture(ProjectFixture):
 
 
 class AuthenticationTests(WebFixture):
+    def test_app_reconciles_profile_runtime_against_database_on_start(self):
+        from core.profile_runtime import ProfileRuntime
+
+        with patch.object(ProfileRuntime, "reconcile", return_value=[]) as reconcile:
+            app = create_app(
+                root=self.root,
+                password=ADMIN_PASSWORD,
+                secret_key=SESSION_KEY,
+                environment={},
+            )
+            app.extensions["web_tasks"].close()
+            reconcile.assert_called_once()
+            self.assertIs(reconcile.call_args.kwargs.get("database"), app.extensions["web_database"])
+
+    def test_reconciliation_failure_diagnostic_does_not_echo_exception_details(self):
+        from core.profile_runtime import ProfileRuntime
+
+        secret = "reconcile-password-secret-739"
+        with patch.object(
+            ProfileRuntime,
+            "reconcile",
+            side_effect=RuntimeError("proxy password=" + secret),
+        ):
+            app = create_app(
+                root=self.root,
+                password=ADMIN_PASSWORD,
+                secret_key=SESSION_KEY,
+                environment={},
+            )
+        self.addCleanup(app.extensions["web_tasks"].close)
+        app.config["TESTING"] = True
+        client = app.test_client()
+        client.get("/login")
+        with client.session_transaction() as current:
+            csrf = current["csrf"]
+        self.assertEqual(
+            client.post(
+                "/login",
+                data={"password": ADMIN_PASSWORD, "csrf_token": csrf},
+            ).status_code,
+            302,
+        )
+
+        response = client.get("/api/system")
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn(secret, response.get_data(as_text=True))
+        self.assertEqual(
+            response.get_json()["profiles"],
+            [{
+                "state": "corrupt",
+                "error_code": "reconciliation_failed",
+                "status": "profile_unavailable",
+                "message": "profile reconciliation failed",
+            }],
+        )
+
     def test_admin_password_requires_at_least_sixteen_characters(self):
         for password in ("", "short", "x" * 15):
             with self.subTest(length=len(password)), self.assertRaises(ValueError):
@@ -129,6 +186,7 @@ class AuthenticationTests(WebFixture):
         for method, path in (
             ("GET", "/api/overview"),
             ("GET", "/api/system"),
+            ("GET", "/api/compensation-scheduler"),
             ("GET", "/api/accounts"),
             ("POST", "/api/accounts/1/password"),
             ("POST", "/api/accounts/export"),
@@ -285,29 +343,74 @@ class AccountTests(WebFixture):
         super().setUp()
         self.login()
 
-    def test_account_list_masks_secrets_but_explicit_reveal_returns_password(self):
-        saved = self.account(proxy="proxy.test:8000:user:proxy-secret", phone_number="+15550000101")
+    def test_account_list_exposes_metadata_but_password_retrieval_is_denied(self):
+        saved = self.account(
+            proxy="proxy.test:8000:user:proxy-secret",
+            phone_number="+15550000101",
+            profile_id="profile-one", engine="playwright",
+            profile_state="ready", identity_state="native",
+            browser_status="authenticated", mailbox_status="active",
+            overall_status="active",
+        )
         response = self.client.get("/api/accounts")
         self.assertEqual(response.status_code, 200)
         row = response.get_json()["accounts"][0]
         self.assertEqual(row["email"], saved["email"])
         self.assertTrue(row["has_password"])
-        for key in ("password", "proxy", "phone_number"):
+        for key in ("password", "proxy", "phone_number", "profile_path"):
             self.assertNotIn(key, row)
-            self.assertNotIn(saved[key], response.get_data(as_text=True))
+            if saved[key]:
+                self.assertNotIn(saved[key], response.get_data(as_text=True))
+        for key in (
+            "profile_id", "engine", "profile_state", "identity_state",
+            "browser_status", "mailbox_status", "overall_status",
+        ):
+            self.assertEqual(row[key], saved[key])
         response = self.request_json("POST", f"/api/accounts/{saved['id']}/password")
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json(), {"password": saved["password"]})
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.get_json(), {"error": "Password retrieval is disabled"})
         self.assertEqual(response.headers["Cache-Control"], "no-store")
 
-    def test_empty_password_and_nonexistent_reveal_are_distinguishable(self):
+    def test_account_list_does_not_expose_free_form_notes(self):
+        secret = "notes-token-secret-739"
+        saved = self.account(notes="otp=246810 token=" + secret)
+        response = self.client.get("/api/accounts")
+        self.assertEqual(response.status_code, 200)
+        row = response.get_json()["accounts"][0]
+        self.assertEqual(row["email"], saved["email"])
+        self.assertNotIn("notes", row)
+        self.assertNotIn(secret, response.get_data(as_text=True))
+        self.assertNotIn("246810", response.get_data(as_text=True))
+
+    def test_account_list_exposes_only_known_health_error_codes(self):
+        known = self.account(
+            email="known-error@example.test",
+            last_error_code="profile_busy",
+        )
+        tainted = self.account(
+            email="tainted-error@example.test",
+            last_error_code="otp=246810 token=account-api-secret-739",
+        )
+
+        response = self.client.get("/api/accounts")
+
+        self.assertEqual(response.status_code, 200)
+        rows = {row["email"]: row for row in response.get_json()["accounts"]}
+        self.assertEqual(rows[known["email"]]["last_error_code"], "profile_busy")
+        self.assertEqual(rows[tainted["email"]]["last_error_code"], "")
+        body = response.get_data(as_text=True)
+        self.assertNotIn("account-api-secret-739", body)
+        self.assertNotIn("246810", body)
+
+    def test_empty_password_and_nonexistent_reveal_are_not_readable(self):
         saved = self.account(password="")
         self.assertFalse(self.client.get("/api/accounts").get_json()["accounts"][0]["has_password"])
         response = self.request_json("POST", f"/api/accounts/{saved['id']}/password")
-        self.assertEqual(response.get_json(), {"password": ""})
-        self.assertEqual(self.request_json("POST", "/api/accounts/99999/password").status_code, 404)
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.get_json(), {"error": "Password retrieval is disabled"})
+        self.assertEqual(self.request_json("POST", "/api/accounts/99999/password").status_code, 403)
 
-    def test_json_and_text_exports_are_explicit_secret_bearing_downloads(self):
+    def test_json_and_text_exports_are_metadata_only_downloads(self):
         saved = self.account(first_name="测试")
         for kind in ("json", "txt"):
             with self.subTest(kind=kind):
@@ -316,21 +419,23 @@ class AccountTests(WebFixture):
                 self.assertEqual(
                     response.headers["Content-Disposition"], f'attachment; filename="accounts.{kind}"'
                 )
-                self.assertIn(saved["password"], response.get_data(as_text=True))
+                content = response.get_data(as_text=True)
+                self.assertNotIn(saved["password"], content)
+                if saved["proxy"]:
+                    self.assertNotIn(saved["proxy"], content)
                 if kind == "json":
-                    self.assertEqual(response.get_json(), self.db.get_all_accounts())
+                    exported = response.get_json()
+                    self.assertEqual(exported[0]["email"], saved["email"])
+                    self.assertNotIn("password", exported[0])
+                    self.assertNotIn("proxy", exported[0])
                 else:
-                    self.assertEqual(
-                        response.get_data(as_text=True), f"{saved['email']}:{saved['password']}\n"
-                    )
+                    self.assertEqual(content, f"{saved['email']}\n")
 
     def test_csv_export_neutralizes_all_formula_prefixes_and_preserves_normal_text(self):
         values = {
             "email": "=HYPERLINK(\"example.test\")",
-            "password": "+SUM(1,2)",
             "first_name": "-1+2",
             "last_name": "@SUM(1,2)",
-            "proxy": "\t=1+2",
             "strategy": "\r=1+2",
             "sms_service": "=1+2",
             "status": "+1",
@@ -352,11 +457,20 @@ class AccountTests(WebFixture):
         unsafe = next(row for row in rows if row["email"] == "'" + dangerous["email"])
         for key, value in values.items():
             with self.subTest(column=key):
-                self.assertEqual(unsafe[key], "'" + value)
+                if key == "strategy":
+                    # Flow metadata is an enum at persistence boundaries; an
+                    # arbitrary formula-like label is rejected/normalized
+                    # before it can become durable CSV content.
+                    self.assertEqual(unsafe[key], "standard")
+                elif key == "sms_service":
+                    self.assertEqual(unsafe[key], "")
+                else:
+                    self.assertEqual(unsafe[key], "'" + value)
         safe = next(row for row in rows if row["email"] == normal["email"])
         self.assertEqual(safe["first_name"], normal["first_name"])
-        self.assertEqual(safe["password"], normal["password"])
         self.assertEqual(safe["created_at"], normal["created_at"])
+        self.assertNotIn("password", rows[0])
+        self.assertNotIn("proxy", rows[0])
 
     def test_export_rejects_unknown_formats_and_non_object_json(self):
         for payload in ({"format": "html"}, {"format": "../csv"}, {}, [], "json"):
@@ -382,6 +496,27 @@ class AccountTests(WebFixture):
         self.assertTrue(data["services"]["FIVESIM_API_KEY"])
         self.assertFalse(data["services"]["TELEGRAM_BOT_TOKEN"])
         self.assertNotIn("Configured-service-secret-481", response.get_data(as_text=True))
+
+    def test_overview_projects_legacy_strategy_and_sms_labels(self):
+        account = self.account(
+            email="legacy-label@example.test",
+            strategy="standard",
+            sms_service="offline",
+        )
+        with sqlite3.connect(self.db.db_path) as conn:
+            conn.execute(
+                "UPDATE accounts SET strategy=?, sms_service=? WHERE id=?",
+                ("password=legacy-overview-secret", "token=legacy-overview-secret",
+                 account["id"]),
+            )
+
+        response = self.client.get("/api/overview")
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()["accounts"]
+        serialized = json.dumps(data)
+        self.assertNotIn("legacy-overview-secret", serialized)
+        self.assertEqual(data["strategies"], {"standard": 1})
+        self.assertEqual(data["sms_services"], {})
 
 
 class ConfigurationTests(ProjectFixture):
@@ -657,13 +792,26 @@ class TaskValidationTests(unittest.TestCase):
                 self.assertEqual(result["account_ids"], [3, 1, 2])
                 self.assertEqual(ids, [3, 1, 3, 2])
                 if action == "warm":
-                    self.assertEqual(result["engine"], "playwright")
+                    self.assertNotIn("engine", result)
                     self.assertEqual(result["duration_minutes"], 3)
         for ids in ("1,2", None, {}, [0], [-1], [True], ["1"], [1.0], list(range(1, 10002))):
             with self.subTest(ids=repr(ids)[:50]), self.assertRaises(ValueError):
                 normalize_params("health", {"account_ids": ids}, "playwright")
         with self.assertRaises(ValueError):
             normalize_params("warm", {"engine": "appium"}, "playwright")
+
+    def test_warm_engine_is_only_kept_for_an_explicit_legacy_override(self):
+        derived = normalize_params(
+            "warm", {"account_ids": [1], "duration_minutes": 2}, "selenium"
+        )
+        self.assertNotIn("engine", derived)
+        explicit = normalize_params(
+            "warm", {
+                "account_ids": [1], "duration_minutes": 2,
+                "engine": "selenium",
+            }, "playwright"
+        )
+        self.assertEqual(explicit["engine"], "selenium")
 
     def test_parameterless_actions_accept_only_an_empty_object(self):
         for action in (
@@ -858,8 +1006,8 @@ class TaskApiTests(WebFixture):
                 self.assertNotIn("\\u001b", text)
                 self.assertIn("[redacted]", text)
         persisted = self.tasks.store.get(task["id"])
-        self.assertEqual(persisted["result"]["password"], "unknown-result-secret")
-        self.assertIn(api_secret, self.tasks.store.logs(task["id"]))
+        self.assertNotIn("password", persisted["result"])
+        self.assertNotIn(api_secret, self.tasks.store.logs(task["id"]))
 
     def test_missing_task_detail_and_cancel_return_not_found(self):
         self.assertEqual(self.client.get("/api/tasks/unknown").status_code, 404)
@@ -916,6 +1064,60 @@ class SettingsAndSessionApiTests(WebFixture):
         response = self.request_json("PUT", "/api/settings", {"values": {"YOUR_PASSWORD": ""}})
         self.assertEqual(response.status_code, 400)
         self.assertFalse(self.configuration.path.exists())
+
+    def test_settings_api_never_returns_proxy_change_url_credentials(self):
+        secret_url = "https://review-user:review-password@rotate.example.test/change"
+        self.configuration.environment["MOBILE_PROXY_IP_CHANGE_URL"] = secret_url
+        response = self.client.get("/api/settings")
+        self.assertEqual(response.status_code, 200)
+        body = response.get_data(as_text=True)
+        self.assertNotIn("review-user", body)
+        self.assertNotIn("review-password", body)
+        field = next(
+            item for item in response.get_json()["fields"]
+            if item["key"] == "MOBILE_PROXY_IP_CHANGE_URL"
+        )
+        self.assertTrue(field["secret"])
+        self.assertEqual(field["value"], "")
+
+    def test_proxy_resource_api_masks_credentials(self):
+        proxy = "proxy.example.test:8080:review-user:review-password"
+        self.configuration.save_resource("proxies", proxy + "\n")
+        response = self.client.get("/api/resources/proxies")
+        self.assertEqual(response.status_code, 200)
+        body = response.get_data(as_text=True)
+        self.assertNotIn("review-user", body)
+        self.assertNotIn("review-password", body)
+        self.assertIn("[redacted]", response.get_json()["content"])
+
+    def test_proxy_resource_api_masks_credentials_in_commented_lines(self):
+        proxy = (
+            "# legacy proxy.example.test:8080:review-user:comment-password "
+            "token=comment-token-secret"
+        )
+        self.configuration.save_resource("proxies", proxy + "\n")
+
+        response = self.client.get("/api/resources/proxies")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.get_data(as_text=True)
+        self.assertNotIn("review-user", body)
+        self.assertNotIn("comment-password", body)
+        self.assertNotIn("comment-token-secret", body)
+        self.assertIn("#", response.get_json()["content"])
+
+    def test_proxy_resource_api_round_trip_restores_masked_comment_credentials(self):
+        original = "# legacy proxy.example.test:8080:review-user:comment-password\n"
+        self.configuration.save_resource("proxies", original)
+        masked = self.client.get("/api/resources/proxies").get_json()["content"]
+
+        response = self.request_json("PUT", "/api/resources/proxies", {"content": masked})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            self.configuration.read_resource("proxies")["content"],
+            original,
+        )
 
     def test_resource_api_reads_writes_and_rejects_invalid_targets_or_content(self):
         response = self.request_json("PUT", "/api/resources/names", {"content": "Test Person\n"})
@@ -1082,6 +1284,8 @@ class PageContractTests(WebFixture):
         for stylesheet in styles:
             self.assertTrue(stylesheet.get("href", "").startswith("/static/"), stylesheet)
         self.assertNotIn(ADMIN_PASSWORD, html)
+        self.assertNotIn('id="warm-engine"', html)
+        self.assertIn("按注册时记录的引擎", html)
         for asset in [script["src"] for script in scripts] + [style["href"] for style in styles]:
             with self.subTest(asset=asset):
                 asset_response = self.client.get(asset)
@@ -1089,6 +1293,35 @@ class PageContractTests(WebFixture):
                     self.assertEqual(asset_response.status_code, 200)
                 finally:
                     asset_response.close()
+
+    def test_account_page_has_no_password_viewer_or_plaintext_export_copy(self):
+        self.login()
+        html = self.client.get("/").get_data(as_text=True)
+        self.assertNotIn("密码仅按需读取", html)
+        self.assertNotIn("明文密码", html)
+        self.assertNotIn("TXT 邮箱:密码", html)
+        script_response = self.client.get("/static/app.js")
+        try:
+            script = script_response.get_data(as_text=True)
+        finally:
+            script_response.close()
+        for forbidden in ("revealPassword", "data-password-id", "/password`,", "password-cell"):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, script)
+
+    def test_tools_page_exposes_browser_capability_matrix_contract(self):
+        self.login()
+        html = self.client.get("/").get_data(as_text=True)
+        self.assertIn('id="system-capabilities"', html)
+        self.assertIn('id="system-capability-rows"', html)
+        self.assertNotIn("Appium 流程尚未完成", html)
+        script_response = self.client.get("/static/app.js")
+        try:
+            script = script_response.get_data(as_text=True)
+        finally:
+            script_response.close()
+        self.assertIn("browser_capabilities", script)
+        self.assertIn("system-capability-rows", script)
 
     def test_system_route_discovers_dependencies_without_launching_or_network_access(self):
         self.login()
@@ -1108,6 +1341,27 @@ class PageContractTests(WebFixture):
         discovery.assert_any_call("playwright")
         connection.assert_called_once_with(("127.0.0.1", 4723), timeout=0.3)
         self.popen.assert_not_called()
+
+    def test_system_route_exposes_verified_browser_capability_matrix_without_secrets(self):
+        self.login()
+        with patch("web.app.importlib.util.find_spec", return_value=None), patch(
+            "web.app.socket.create_connection", side_effect=OSError("offline test")
+        ):
+            response = self.client.get("/api/system")
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        matrix = data["browser_capabilities"]
+        self.assertEqual(set(matrix), {"playwright", "selenium"})
+        self.assertEqual(matrix["playwright"]["user_agent"]["status"], "native")
+        self.assertEqual(matrix["selenium"]["proxy_credentials"]["status"], "unsupported")
+        self.assertTrue(all(
+            capability["verified"] is False
+            for engine in matrix.values()
+            for capability in engine.values()
+        ))
+        serialized = json.dumps(data)
+        for forbidden in ("profile_path", "proxy_password", "cookie_value", "token-secret"):
+            self.assertNotIn(forbidden, serialized.lower())
 
     def test_proxy_management_has_own_menu_editor_and_configuration_form(self):
         self.login()
@@ -1135,6 +1389,17 @@ class PageContractTests(WebFixture):
         response = self.client.get("/api/not-a-real-route")
         self.assertEqual(response.status_code, 404)
         self.assertIn("error", response.get_json())
+
+    def test_value_error_handler_does_not_echo_credential_payloads(self):
+        self.login()
+        secret = "password=api-boundary-secret-123"
+        handler = self.app.error_handler_spec[None][None][ValueError]
+        with self.app.app_context():
+            response = handler(ValueError(secret))
+        self.assertEqual(response[1], 400)
+        body = response[0].get_json()
+        self.assertNotIn("api-boundary-secret-123", body["error"])
+        self.assertIn("[redacted]", body["error"])
 
 
 if __name__ == "__main__":

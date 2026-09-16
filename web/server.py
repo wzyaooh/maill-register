@@ -3,12 +3,76 @@ import argparse
 import atexit
 import logging
 import os
+import subprocess
+import sys
 from pathlib import Path
 
 from web.runtime import MODES, prepare_environment
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+class CompensationSchedulerSupervisor:
+    """Own the optional periodic compensation subprocess lifecycle."""
+
+    def __init__(self, root, configuration):
+        self.root = Path(root).resolve()
+        self.configuration = configuration
+        self.process = None
+
+    def start(self):
+        if self.process is not None and self.process.poll() is None:
+            return True
+        settings = self.configuration.compensation_scheduler_settings()
+        if not settings["enabled"]:
+            return False
+        environment = dict(self.configuration.environment)
+        environment.update(self.configuration.values())
+        environment.update({
+            "GMAIL_CONFIG_FROM_ENV": "1",
+            "PYTHONUNBUFFERED": "1",
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "LEDGER_DB_PATH": str((self.root / "data" / "database.db").resolve()),
+        })
+        for key in ("WEB_ADMIN_PASSWORD", "WEB_SECRET_KEY"):
+            environment.pop(key, None)
+        code_root = Path(self.configuration.code_root).resolve()
+        environment["PYTHONPATH"] = os.pathsep.join(filter(None, (
+            str(code_root), environment.get("PYTHONPATH", ""),
+        )))
+        self.process = subprocess.Popen(
+            [sys.executable, "-m", "web.compensation_scheduler", "--root", str(self.root)],
+            cwd=code_root,
+            env=environment,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=(os.name != "nt"),
+        )
+        return True
+
+    def stop(self, timeout=10, kill_timeout=2):
+        process = self.process
+        if process is None:
+            return True
+        if process.poll() is not None:
+            self.process = None
+            return True
+        try:
+            process.terminate()
+            process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            try:
+                process.wait(timeout=kill_timeout)
+            except subprocess.TimeoutExpired:
+                return False
+        except OSError:
+            if process.poll() is None:
+                return False
+        self.process = None
+        return True
 
 
 def lock_server(root):
@@ -46,18 +110,23 @@ def main():
     try:
         root = prepare_environment(args.env, ROOT) if args.env else ROOT
     except (OSError, ValueError) as exc:
-        parser.exit(1, f"Unable to prepare environment: {exc}\n")
+        parser.exit(1, f"Unable to prepare environment ({type(exc).__name__})\n")
     os.chdir(ROOT)
     try:
         from waitress import serve
         from web.app import create_app
     except ImportError as exc:
-        parser.exit(1, f"Missing Web dependency: {exc}. Install requirements.txt in your virtual environment.\n")
+        parser.exit(
+            1,
+            "Missing Web dependency (%s). Install requirements.txt in your "
+            "virtual environment.\n" % type(exc).__name__,
+        )
     try:
         server_lock = lock_server(root)
     except ValueError as exc:
-        parser.exit(1, str(exc) + "\n")
+        parser.exit(1, "Unable to acquire Web server lock (%s)\n" % type(exc).__name__)
     manager = None
+    scheduler = None
     handlers = []
     logger = logging.getLogger()
     old_level = logger.level
@@ -65,9 +134,21 @@ def main():
         try:
             app = create_app(root=root, code_root=ROOT, deployment=args.env) if args.env else create_app()
         except ValueError as exc:
-            parser.exit(1, f"{exc}\nConfiguration file: {root / '.env'}\n")
+            parser.exit(
+                1,
+                "Invalid Web configuration (%s)\nConfiguration file: %s\n"
+                % (type(exc).__name__, root / ".env"),
+            )
         manager = app.extensions["web_tasks"]
         atexit.register(manager.close)
+        scheduler = CompensationSchedulerSupervisor(
+            root, app.extensions["web_configuration"],
+        )
+        try:
+            scheduler.start()
+        except (OSError, ValueError) as exc:
+            parser.exit(1, "Unable to start compensation scheduler (%s)\n" % type(exc).__name__)
+        atexit.register(scheduler.stop)
         if args.env:
             if not logger.handlers:
                 handlers.append(logging.StreamHandler())
@@ -88,6 +169,10 @@ def main():
         else:
             serve(app, host=args.host, port=port, threads=8)
     finally:
+        if scheduler is not None and not scheduler.stop():
+            logging.getLogger(__name__).error(
+                "Compensation scheduler process did not exit after termination"
+            )
         if manager is not None:
             manager.close()
         for handler in handlers:

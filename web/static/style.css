@@ -225,9 +225,6 @@ td .json-panel { max-width: 370px; min-width: 220px; margin-top: 8px; }
 .checkbox-cell { width: 35px; padding-right: 2px; }
 .account-email { color: #334766; font-size: 12px; font-weight: 600; overflow-wrap: anywhere; max-width: 300px; }
 .account-name { color: #8a96aa; font-size: 10px; margin-top: 3px; }
-.password-cell { min-width: 160px; }
-.password-value { display: block; font-family: "SFMono-Regular", Consolas, monospace; color: #6f7e96; word-break: break-all; max-width: 240px; font-size: 11px; }
-.password-cell .button { margin-top: 3px; }
 .account-details { font-size: 11px; min-width: 150px; max-width: 250px; overflow-wrap: anywhere; }
 .account-details .ui-disclosure__panel > div { margin-top: 6px; }
 
@@ -266,6 +263,15 @@ ui-checkbox.secret-clear .ui-checkbox__text { color: #967247; }
 .dependency-item { display: flex; align-items: center; justify-content: space-between; gap: 7px; border: 1px solid #edf0f6; background: #fafbfe; border-radius: 7px; padding: 10px 12px; font-size: 11px; }
 .dependency-item > span:first-child { overflow-wrap: anywhere; }
 .dependency-item .badge { font-size: 9px; padding: 2px 6px; }
+.capability-heading { display: flex; align-items: center; justify-content: space-between; gap: 15px; margin: 24px 0 12px; border-top: 1px solid var(--line); padding-top: 20px; }
+.capability-heading h3 { font-size: 13px; }
+.capability-heading p { color: var(--muted); font-size: 11px; margin-top: 4px; }
+.capability-table-wrap { border: 1px solid #edf0f6; border-radius: 8px; }
+.capability-table-wrap table { min-width: 620px; }
+.capability-table-wrap th, .capability-table-wrap td { padding: 10px 12px; }
+.capability-engine { font-weight: 650; color: #43526e; }
+.capability-name { color: #61718b; }
+.capability-table-wrap .empty-state { padding: 20px; }
 .system-facts { display: flex; flex-wrap: wrap; gap: 18px 40px; margin: 22px 0; border-top: 1px solid var(--line); padding-top: 18px; }
 .system-facts > div { display: flex; gap: 12px; font-size: 11px; align-items: center; }
 .system-facts span { color: #8390a5; }
