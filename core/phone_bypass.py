@@ -6,6 +6,11 @@ import asyncio
 import random
 import logging
 from config.settings import Config
+from core.secret_safety import (
+    has_durable_sms_context,
+    normalize_sms_service,
+    normalize_verification_method,
+)
 
 logger = logging.getLogger('gmail_creator_phone_bypass')
 
@@ -148,7 +153,8 @@ async def _check_phone_still_required(page):
         return True
 
 
-async def handle_phone_page(page, is_mobile=False, sms_api_available=False):
+async def handle_phone_page(page, is_mobile=False, sms_api_available=False,
+                            *, job_id="", attempt_id="", order_store=None):
     """
     Multi-strategy phone bypass for Playwright flow.
     Returns: (success: bool, method: str)
@@ -179,7 +185,10 @@ async def handle_phone_page(page, is_mobile=False, sms_api_available=False):
             if not await _check_phone_still_required(page):
                 return True, "email_instead"
         # Go to SMS
-        success, method = await _sms_api_verification(page, is_mobile)
+        success, method = await _sms_api_verification(
+            page, is_mobile, job_id=job_id, attempt_id=attempt_id,
+            order_store=order_store,
+        )
         if success:
             return True, method
         return False, method
@@ -280,10 +289,12 @@ async def handle_phone_page(page, is_mobile=False, sms_api_available=False):
                     if (not any(s in content.lower() for s in PHONE_SIGNALS + QR_SIGNALS)
                         and "devicephonever" not in current_url
                         and "phonechallenge" not in current_url):
-                        logger.info(f"Send SMS escaped to fresh signup page")
+                        logger.info("Send SMS escaped to fresh signup page")
                         return True, "send_sms_escaped"
                     else:
-                        logger.debug(f"URL {url[:60]} still shows verification")
+                        # The target URL may be supplied by a future provider
+                        # or compatibility caller.  Keep it out of logs.
+                        logger.debug("Signup escape target still shows verification")
             except Exception:
                 continue
 
@@ -381,7 +392,7 @@ async def handle_phone_page(page, is_mobile=False, sms_api_available=False):
                     if not await _check_phone_still_required(page):
                         return True, "recovery_email"
             except Exception as e:
-                logger.warning(f"Recovery email fill failed: {e}")
+                logger.warning("Recovery email fill failed: %s", type(e).__name__)
 
     # Strategy 5: JS click on skip/not-now links hidden in the DOM
     try:
@@ -400,7 +411,9 @@ async def handle_phone_page(page, is_mobile=False, sms_api_available=False):
             return null;
         }""")
         if result:
-            logger.info(f"Phone bypass: JS click on '{result}'")
+            # ``result`` is DOM-controlled text and may contain arbitrary page
+            # content.  The outcome is sufficient for diagnostics.
+            logger.info("Phone bypass: JS click strategy matched")
             await page.wait_for_timeout(2500)
             if not await _check_phone_still_required(page):
                 return True, "js_skip"
@@ -432,7 +445,7 @@ async def handle_phone_page(page, is_mobile=False, sms_api_available=False):
                 await page.wait_for_timeout(2000)
                 content = await page.content()
                 if any(s in content.lower() for s in SUCCESS_SIGNALS):
-                    logger.info(f"Phone bypassed via URL redirect: {bypass_url}")
+                    logger.info("Phone bypassed via approved URL redirect")
                     return True, "url_bypass"
             except Exception:
                 continue
@@ -502,11 +515,16 @@ async def handle_phone_page(page, is_mobile=False, sms_api_available=False):
             logger.info("Phone bypassed via session reset + fresh signup")
             return True, "session_reset"
     except Exception as e:
-        logger.debug(f"Session reset bypass failed: {e}")
+        # Browser/provider exceptions may embed URLs or credentials.  Keep
+        # diagnostics to the exception type at this output boundary.
+        logger.debug("Session reset bypass failed: %s", type(e).__name__)
 
     # Strategy 10: SMS API verification (if configured and enabled)
     if sms_api_available:
-        success, method = await _sms_api_verification(page, is_mobile)
+        success, method = await _sms_api_verification(
+            page, is_mobile, job_id=job_id, attempt_id=attempt_id,
+            order_store=order_store,
+        )
         if success:
             return True, method
         return False, method
@@ -515,7 +533,8 @@ async def handle_phone_page(page, is_mobile=False, sms_api_available=False):
     return False, "all_failed"
 
 
-async def _sms_api_verification(page, is_mobile=False):
+async def _sms_api_verification(page, is_mobile=False, *, job_id="",
+                                attempt_id="", order_store=None):
     """
     Full SMS API verification flow:
     1. Check balance
@@ -526,9 +545,36 @@ async def _sms_api_verification(page, is_mobile=False):
     6. Verify
     7. Cancel on failure / Finish on success
     """
+    if not has_durable_sms_context(job_id, attempt_id, order_store):
+        return False, "sms_missing_attempt_context"
     logger.info("Attempting SMS API verification...")
     order_id = None
+    local_order_id = None
     service_name = None
+
+    async def _cancel_safely(cancel_fn):
+        """Request provider cancellation without masking the root error."""
+        if not order_id or not service_name:
+            return
+        try:
+            await cancel_fn(
+                service_name, order_id, order_store=order_store,
+                local_order_id=local_order_id,
+            )
+        except Exception as cleanup_error:
+            logger.warning(
+                "SMS API cancellation failed: %s", type(cleanup_error).__name__
+            )
+
+    def _provider_failure_code(error):
+        operation = str(getattr(error, "operation", "") or "").strip().lower()
+        if operation == "finish":
+            return "sms_finish_failed"
+        if operation == "poll":
+            return "sms_poll_failed"
+        if operation == "cancel":
+            return "sms_cancel_failed"
+        return "sms_error"
 
     try:
         from services.sms_manager import (
@@ -544,22 +590,30 @@ async def _sms_api_verification(page, is_mobile=False):
             return False, "sms_no_balance"
 
         # Step 2: Request phone number
-        phone_data = await get_phone_from_any_service()
+        phone_data = await get_phone_from_any_service(
+            order_store=order_store, job_id=job_id, attempt_id=attempt_id,
+        )
         if not phone_data:
             logger.error("SMS API: Could not get phone number from any service")
             return False, "sms_no_number"
 
         phone_number = phone_data['phone']
-        service_name = phone_data['service']
+        service_name = normalize_sms_service(phone_data.get('service'))
+        if not service_name:
+            # Provider responses are untrusted.  Do not pass an arbitrary
+            # service name into logs, result labels, or adapter dispatch.
+            logger.error("SMS API: Provider returned an unsupported service")
+            return False, "sms_error"
         order_id = phone_data['id']
+        local_order_id = phone_data.get('local_order_id')
         formatted_phone = format_phone_for_google(phone_number)
-        logger.info(f"SMS API: Got {formatted_phone} from {service_name} (order: {order_id})")
+        logger.info("SMS API: acquired a number from %s (order allocated)", service_name)
 
         # Step 3: Find phone input and enter number
         phone_input = await _find_input(page, PHONE_INPUT_SELECTORS)
         if not phone_input:
             logger.error("SMS API: Could not find phone input field on page")
-            await cancel_order(service_name, order_id)
+            await _cancel_safely(cancel_order)
             return False, "sms_no_phone_input"
 
         await phone_input.click()
@@ -585,8 +639,8 @@ async def _sms_api_verification(page, is_mobile=False):
                 "too many attempts", "try again later",
             ]
             if any(err in error_lower for err in phone_errors):
-                logger.warning(f"SMS API: Phone number rejected by Google")
-                await cancel_order(service_name, order_id)
+                logger.warning("SMS API: Phone number rejected by Google")
+                await _cancel_safely(cancel_order)
                 return False, "sms_phone_rejected"
         except Exception:
             pass
@@ -609,18 +663,21 @@ async def _sms_api_verification(page, is_mobile=False):
 
         if not code_page_ready:
             logger.error("SMS API: Code input page did not appear")
-            await cancel_order(service_name, order_id)
+            await _cancel_safely(cancel_order)
             return False, "sms_no_code_page"
 
         # Step 6: Poll for SMS code
         logger.info("SMS API: Waiting for verification code...")
-        code = await get_code_from_service(service_name, order_id, wait_time=180)
+        code = await get_code_from_service(
+            service_name, order_id, wait_time=180, order_store=order_store,
+            local_order_id=local_order_id,
+        )
         if not code:
             logger.error("SMS API: Timed out waiting for code")
-            await cancel_order(service_name, order_id)
+            await _cancel_safely(cancel_order)
             return False, "sms_timeout"
 
-        logger.info(f"SMS API: Code received: {code}")
+        logger.info("SMS API: verification code received")
 
         # Step 7: Enter code on verification page
         code_input = await _find_input(page, CODE_INPUT_SELECTORS)
@@ -633,7 +690,7 @@ async def _sms_api_verification(page, is_mobile=False):
 
         if not code_input:
             logger.error("SMS API: Could not find code input field")
-            await cancel_order(service_name, order_id)
+            await _cancel_safely(cancel_order)
             return False, "sms_no_code_input"
 
         await code_input.click()
@@ -657,28 +714,39 @@ async def _sms_api_verification(page, is_mobile=False):
             ]
             if any(err in result_lower for err in verify_errors):
                 logger.error("SMS API: Verification code was rejected")
-                await cancel_order(service_name, order_id)
+                await _cancel_safely(cancel_order)
                 return False, "sms_code_rejected"
         except Exception:
             pass
 
         # Step 10: Finish order (mark as used, saves money)
-        await finish_order(service_name, order_id)
-        logger.info(f"SMS API: Verification successful via {service_name}")
+        finish_result = await finish_order(
+            service_name, order_id, order_store=order_store,
+            local_order_id=local_order_id,
+        )
+        if isinstance(finish_result, dict) and finish_result.get("ok") is False:
+            # Provider adapters normally raise SmsProviderError, but retain a
+            # stable machine code for older adapters that return {ok: false}.
+            return False, "sms_finish_failed"
+        logger.info("SMS API: Verification successful via %s", service_name)
         return True, f"sms_{service_name}"
 
     except ImportError:
         logger.error("SMS manager module not available")
         return False, "sms_import_error"
     except Exception as e:
-        logger.error(f"SMS API error: {e}")
-        if order_id and service_name:
+        logger.error("SMS API error: %s", type(e).__name__)
+        failure_code = _provider_failure_code(e)
+        # A successful verification whose finish call failed must remain in
+        # the durable finish compensation queue; cancelling it can lose a
+        # usable order and would obscure the provider failure.
+        if failure_code != "sms_finish_failed":
             try:
                 from services.sms_manager import cancel_order
-                await cancel_order(service_name, order_id)
-            except Exception:
+                await _cancel_safely(cancel_order)
+            except ImportError:
                 pass
-        return False, "sms_error"
+        return False, failure_code
 
 
 async def handle_qr_page(page, is_mobile=False):
@@ -695,7 +763,7 @@ async def handle_qr_page(page, is_mobile=False):
         await page.evaluate("() => { try { localStorage.clear(); sessionStorage.clear(); } catch(e) {} }")
         logger.info("QR escape: Cleared cookies and storage")
     except Exception as e:
-        logger.debug(f"QR escape: Cookie clear failed: {e}")
+        logger.debug("QR escape: Cookie clear failed: %s", type(e).__name__)
 
     await page.wait_for_timeout(random.randint(2000, 4000))
 
@@ -846,7 +914,9 @@ async def handle_qr_page(page, is_mobile=False):
     return False, False
 
 
-async def handle_verification(page, is_mobile=False, use_sms_api=False, progress=None, account_task=None):
+async def handle_verification(page, is_mobile=False, use_sms_api=False, progress=None,
+                              account_task=None, *, job_id="", attempt_id="",
+                              order_store=None):
     """
     Main entry point: detect verification type and handle it.
     Returns: (success: bool, method: str, should_restart: bool)
@@ -896,9 +966,14 @@ async def handle_verification(page, is_mobile=False, use_sms_api=False, progress
             Config.ONLINESIM_API_KEY or getattr(Config, 'GETSMS_API_KEY', '')
         )
 
-        success, method = await handle_phone_page(page, is_mobile, sms_available)
+        success, method = await handle_phone_page(
+            page, is_mobile, sms_available, job_id=job_id,
+            attempt_id=attempt_id, order_store=order_store,
+        )
+        method = normalize_verification_method(method)
         should_restart = method in ("send_sms_escaped", "session_reset")
         return success, method, should_restart
 
-    logger.info(f"Page type: {page_type} — assuming no verification needed")
+    page_type = normalize_verification_method(page_type, default="unknown")
+    logger.info("Page type classified as %s — assuming no verification needed", page_type)
     return True, "none_detected", False
