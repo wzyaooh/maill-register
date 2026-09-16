@@ -140,7 +140,7 @@ WEB_COOKIE_SECURE=true
 | 总览 | 账号数量、可用比例、策略与短信服务分布、任务动态、会话历史和服务配置状态 |
 | 创建账号 | Ghost、Premium、YouTube、Workspace 模式；选择引擎、数量、短信验证及并行参数 |
 | 任务与日志 | 执行进度、日志、任务参数、结构化结果、历史记录和停止操作 |
-| 账号管理 | 搜索、状态筛选、批量选择、密码按需显示、导出、健康检查和养号 |
+| 账号管理 | 搜索、状态筛选、批量选择、非敏感 metadata-only 导出、健康检查和养号；控制台不提供密码查看 |
 | 代理管理 | 静态代理编辑与文件导入、KKOIP 配置、选池策略、代理检测、公开代理获取和检测统计 |
 | 资源管理 | 姓名库、User-Agent 文件编辑与保存 |
 | 系统配置 | 分组查看和编辑账号、浏览器、短信、验证码、行为及通知等配置 |
@@ -149,21 +149,22 @@ WEB_COOKIE_SECURE=true
 ### 创建与养号
 
 - 创建数量：每批 **1–100** 个账号。
-- 创建引擎：Playwright、Selenium，以及实验性的 Appium 流程。
+- 创建引擎：Playwright、Selenium。Appium 创建当前 fail-closed，仅保留端口诊断信息。
 - Ghost 使用标准流程且默认不启用短信 API；Premium 默认启用短信 API。
 - YouTube、Workspace 使用各自的创建入口，可按页面选项启用短信验证。
 - Playwright / Selenium 支持串行和并行创建，并行数量为 **1–5** 个工作线程。
 - 并行创建需要先配置固定账号密码；串行创建可生成密码。
 - 创建页的注册前预热时长为 **0–60 分钟**，由 Selenium 非短信路径使用。
 - 账号管理页支持通过 Playwright 或 Selenium 对全部或选中的账号养号，时长为 **1–60 分钟**。
+- Appium 不属于当前可用创建引擎；在真实账号、数据库行、job/attempt 和 profile 生命周期契约补齐前，系统不会启动设备、创建账号或写入部分结果。
 
 ### 账号检查与导出
 
-- 健康检查通过 IMAP 进行，并将可确定的状态更新写入数据库。
-- 密码默认隐藏，显式查看后会自动隐藏，离开账号页面也会清除显示。
-- 支持 CSV、JSON 和 `邮箱:密码` 格式的 TXT 导出。
+- 健康检查同时记录注册时保存的浏览器 profile 与 IMAP 两个通道；profile 不可用时仍检查 IMAP，最终状态由两个事实派生并写入数据库。
+- 账号密码只在受控后台任务中读取，控制台不提供密码查看器。
+- 支持 CSV、JSON 和 TXT 邮箱列表导出；三种格式均为 metadata-only，不包含密码、代理凭据、Cookie 或 OTP。
 - 导出包含全部账号，不受页面搜索或勾选范围影响。
-- 导出文件包含明文密码。CSV 会对可能被电子表格当作公式的单元格加前导单引号；需要原始值时使用 JSON 或 TXT。
+- CSV 会对可能被电子表格当作公式的单元格加前导单引号；导出内容不提供恢复凭据的入口。
 
 <a id="proxy-management"></a>
 ## 代理管理
@@ -185,7 +186,7 @@ WEB_COOKIE_SECURE=true
 - `#` 开头的行为注释。
 - 按上述格式填写，不要添加 `http://`、`socks5://` 等 URL 前缀。
 - 文件导入只更新编辑区，点击「保存代理文件」后才写入服务器。
-- 列表预览隐藏认证信息；原始文本编辑区仍显示明文，请勿公开分享。
+- 列表预览和编辑区都会遮蔽代理用户名、密码及注释中的认证片段；未遮蔽的配置文件仍属于敏感文件，请勿公开分享。
 - 「获取免费代理」会连接公开来源、检测并保存代理。完成后可重新读取文件。
 
 ### KKOIP 动态池
@@ -258,6 +259,7 @@ WEB_COOKIE_SECURE=true
 | --- | --- |
 | `.env` | 环境配置及凭据 |
 | `data/database.db` | SQLite 账号数据库与会话统计 |
+| `data/profiles/<profile_id>/` | 浏览器注册/养号/健康检查复用的持久化 profile（manifest、lease 与登录会话，属于敏感数据） |
 | `data/web/tasks.db` | 后台任务记录 |
 | `data/web/*.log` | 任务日志及服务日志 |
 | `data/session_state.json` | 串行批次恢复断点 |
@@ -280,9 +282,29 @@ WEB_COOKIE_SECURE=true
 
 「工具与服务 → 数据迁移」可将运行目录内的 `data/accounts.json` 或 `data/accounts.txt` 导入 SQLite。迁移是显式操作，不在启动时自动执行。
 
+浏览器 profile 不再按用户名拼接目录名。注册时会在当前环境的
+`data/profiles/<profile_id>/` 下生成随机 id、`profile_manifest.json` 和
+`profile.lock`；manifest 记录注册引擎、浏览器 runtime、身份及代理端点摘要。
+服务启动时会执行只读诊断并在必要时把“manifest 有绑定但数据库已不存在”的
+profile 标记为 `orphaned`。诊断只显示 profile id、状态、引擎和错误码，不会输出
+账号密码、代理密码或 Cookie。
+
+健康检查和养号的服务入口只接受 `profile_id`（以及数据库中的账号绑定），并由
+manifest 决定 Playwright 或 Selenium；`profile_path` 不能单独指定身份或绕过 lease。
+路径参数只在受控迁移、legacy adoption 和诊断工具内部使用。
+
+旧的只有目录没有 manifest 的浏览器数据会标记为 `legacy_unbound`，不会自动猜测
+归属。确实需要继续使用时，应先备份目录，再通过受控的 legacy adoption 流程提供
+邮箱和引擎；该流程生成 `identity_reconstructed`，必须在浏览器中观察到同一邮箱
+后才能转为 `ready`。Selenium 对带认证信息的代理目前会明确报告
+`proxy_unavailable`，不会为了继续运行而静默直连。
+
 迁移已有环境前，先停止相关服务并备份配置、数据库、任务记录和资源文件，再将需要的数据放入目标环境。开发、正式环境的运行目录不会自动互相复制数据。
 
-配置、运行目录及虚拟环境被 Git 忽略。数据库、原始日志和导出文件可能包含明文凭据，请限制文件权限并保护备份。页面的自动脱敏不能替代对原始文件的保护。
+配置、运行目录及虚拟环境被 Git 忽略。数据库、profile 目录和原始日志
+可能包含凭据或登录态；metadata-only 导出不包含这些内容。请在备份前停止相关服务、限制文件权限，并将同一环境的
+`data/database.db` 与 `data/profiles/` 一起备份；只备份数据库不能恢复浏览器会话。
+页面的自动脱敏不能替代对原始文件的保护。
 
 <a id="python-entry"></a>
 ## 直接使用 Python 启动
@@ -365,29 +387,66 @@ maill-register/
 - **Playwright**：需要安装浏览器二进制；Linux 可能还需系统库，安装步骤应使用相应管理员权限。
 - **有头浏览器**：服务器需要可用的图形会话；正式环境模板默认启用无头模式。
 - **Selenium**：需要可用的 Chrome 及驱动环境。
-- **Appium**：需要独立运行 `127.0.0.1:4723` 服务并连接 Android 设备或模拟器。当前创建路径为实验性实现，不保存已验证账号，也不支持并行创建。
+- **macOS Python**：推荐使用 Homebrew、pyenv 或其他带现代 OpenSSL 的托管 Python 创建虚拟环境，不建议直接用 `/usr/bin/python3`。系统 Python 可能触发 `urllib3` 的 `NotOpenSSLWarning`；这属于运行时环境提示，不能通过降级 `urllib3` 规避，因为 Selenium 需要 `urllib3>=2.5`。
+- **macOS 浏览器路径**：如果 Chrome/Chromium 或 ChromeDriver 不在 `PATH`，设置 `CHROME_BINARY` 和 `CHROMEDRIVER_PATH`；真实 smoke 会先校验两者 major 版本一致。
+- **Appium**：当前创建流程显式禁用（fail-closed）。`127.0.0.1:4723` 仅用于端口诊断，不代表设备已连接或创建能力可用；重新启用前必须完成真实账号 smoke、account row、job/attempt 和 profile 生命周期验证。
 - **语音服务**：从 Web 启动时监听 `127.0.0.1:5000`，需要非空且非 `changeme` 的 `VOICE_SERVER_TOKEN`；音频转换需要 FFmpeg。
 - `/voice` 和 `/otp` 使用 `X-Voice-Token` 请求头或 `token` 查询参数认证，优先使用请求头。远程回调需要单独配置受保护的 HTTPS 入口。
 - 语音服务独立运行，当前创建流程不会自动读取语音 OTP API。
 - 配置开关的实际效果取决于对应引擎；任务中的验证码、平台验证和外部服务结果均应以实际执行结果为准。
+
+真实浏览器 smoke 必须显式开启，且只访问本地 fixture：
+
+```bash
+RUN_REAL_BROWSER_SMOKE=1 \
+venv/dev/bin/python -m unittest tests.test_browser_real_smoke -v
+```
+
+### 短信补偿与恢复
+
+worker 启动恢复、手工/内部单次入口 `TaskManager.run_sms_compensation_once()`、显式 `compensation` 操作和可选周期 worker 统一使用当前运行环境的 `JobLedger`，记录补偿 job、attempt、重试决策和有限错误码。应用工厂不会启动周期任务；只有 `web.server` launcher 在显式启用后创建并监管独立进程。
+
+周期补偿默认关闭。修改以下配置后需要重启 Web 服务：
+
+| 配置项 | 默认值 | 有效范围 |
+| --- | ---: | ---: |
+| `COMPENSATION_SCHEDULER_ENABLED` | `false` | `true` / `false` |
+| `COMPENSATION_SCHEDULER_INTERVAL_SECONDS` | `300` | 1-86400 秒 |
+| `COMPENSATION_SCHEDULER_LIMIT` | `100` | 1-1000 个订单/pass |
+| `COMPENSATION_SCHEDULER_MAX_ATTEMPTS` | `3` | 1-20 次 |
+| `COMPENSATION_SCHEDULER_BACKOFF_SECONDS` | `30` | 0-86400 秒 |
+| `COMPENSATION_SCHEDULER_TIME_BUDGET_SECONDS` | `30` | 1-300 秒/pass |
+
+每个 dev/prod runtime 使用各自的 `.env`、数据库、`data/web/compensation-scheduler.lock` 和 `data/web/compensation-scheduler-status.json`。专用非阻塞锁阻止两个周期 worker 重叠；每个 pass 同时受订单数、provider 请求超时、持久化退避和总时间预算限制。SIGTERM 会设置取消事件并中断 interval wait，launcher 先等待正常退出，超时后才升级终止。
+
+登录后的只读接口 `GET /api/compensation-scheduler` 只返回 enable/state、有限时间戳、`claimed/cancelled/completed/failed` 整数计数和有限错误码。状态文件以 `0600` 原子替换；缺失、损坏、过期或不可读状态会投影为有限安全状态，不返回异常、provider payload、order/provider ID、OTP、账号、代理或凭据。
+
+周期 worker 只增加重复执行单次 durable compensation pass 的机制，不改变手工补偿和 worker 启动恢复的触发语义。需要临时排障时可以保持周期配置关闭，继续使用原有单次入口；不要通过删除锁文件强行并发启动第二个 worker。
+
+- `limit` 限制每个 attempt 处理的 provider 订单数。正常分批剩余订单不会触发失败或额外重试；返回计数对应最后一次实际扫描，各次 attempt 的计数分别保存在 ledger 中。
+- provider 超时或失败后，订单通过 `next_action_at` 持久化退避。没有到期订单时，当前 job 保留原失败结果与计数，由后续扫描继续处理，不会把空扫描记成成功。
+- 当前扫描新发生的补偿耗尽返回 `compensation_failed`。历史耗尽记录保留供人工排查，不会污染新的成功扫描，也不会被自动无限重试。
+- 同一 job 已有运行中的 owner 时，重复调用返回 `compensation_claimed`，不会结束原 owner 的 attempt。已结束 job 的重放保留终态和计数，不再次调用 provider。
+- 对外补偿结果及 ledger 只保留完整整数计数和有限错误码，不保留 provider 原始响应、异常文本、短信验证码或凭据。
+- SQLite claim 能阻止本地 worker 重复拥有同一订单，但不能保证外部 provider exactly-once。请求已被远端接受而响应丢失时，结果仍可能不确定；系统保留 timeout/claim-loss 状态，不伪造 cancelled/completed。
 
 <a id="validation"></a>
 ## 验证与常见问题
 
 ### 回归测试
 
-测试使用 Python 标准库 `unittest`，覆盖登录、配置、资源、任务、断点、进程生命周期以及开发／正式环境隔离。测试不创建真实账号，不购买短信，不向 Telegram 发送消息；部分测试会临时启动本机 HTTP 服务。
+测试使用 Python 标准库 `unittest`，覆盖 profile 内核、双引擎协议、warmer、秘密边界、job/attempt、短信订单与补偿，以及 Web 登录、配置、任务、进程生命周期和环境隔离。测试不创建真实账号，不购买短信，不向 Telegram 发送消息；部分测试会临时启动本机 HTTP 服务。
 
 在项目目录使用已安装依赖的解释器运行：
 
 ```bash
-venv/dev/bin/python -m unittest discover -s tests -p 'test_web*.py' -v
+venv/dev/bin/python -m unittest discover -s tests -p 'test*.py' -v
 ```
 
 也可以在激活虚拟环境后执行：
 
 ```bash
-python -m unittest discover -s tests -p 'test_web*.py' -v
+python -m unittest discover -s tests -p 'test*.py' -v
 ```
 
 ### 常见问题

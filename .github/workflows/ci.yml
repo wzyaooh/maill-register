@@ -1,0 +1,128 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      real_browser_smoke:
+        description: "Run Playwright/Selenium localhost smoke on manual dispatch"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Python ${{ matrix.python-version }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python-version: "3.9"
+          - os: ubuntu-latest
+            python-version: "3.10"
+          - os: ubuntu-latest
+            python-version: "3.11"
+          - os: ubuntu-latest
+            python-version: "3.12"
+          - os: macos-14
+            python-version: "3.9"
+          - os: macos-14
+            python-version: "3.11"
+          - os: macos-14
+            python-version: "3.12"
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
+      GMAIL_CONFIG_FROM_ENV: "1"
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt
+
+      - name: Check dependency resolution
+        run: python -m pip check
+
+      - name: Run local browser protocol tests
+        run: python -m unittest tests.test_local_browser_protocol tests.test_browser_probe_contract tests.test_auth_classifier_hardening -v
+
+      - name: Run full unittest suite
+        run: python -m unittest discover -s tests -p 'test*.py' -v
+
+      - name: Compile Python sources
+        run: python -m compileall -q core services web tests tools
+
+      - name: Check browser client JavaScript
+        run: node --check web/static/app.js
+
+      - name: Check patch whitespace
+        run: git diff --check
+
+  real-browser-smoke:
+    name: Required localhost browser smoke
+    if: github.event_name != 'workflow_dispatch' || inputs.real_browser_smoke == true
+    runs-on: ubuntu-latest
+    env:
+      RUN_REAL_BROWSER_SMOKE: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
+      GMAIL_CONFIG_FROM_ENV: "1"
+      # This job uses only the repository's 127.0.0.1 fixture.  No service
+      # credentials or external provider configuration is supplied.
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install Python dependencies
+        run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt
+
+      - name: Install Playwright Chromium
+        run: python -m playwright install --with-deps chromium
+
+      - name: Provision matching Chrome and ChromeDriver
+        id: chrome
+        uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: stable
+          install-dependencies: true
+          install-chromedriver: true
+
+      - name: Verify Chrome and ChromeDriver majors
+        env:
+          CHROME_BINARY: ${{ steps.chrome.outputs.chrome-path }}
+          CHROMEDRIVER_PATH: ${{ steps.chrome.outputs.chromedriver-path }}
+        run: |
+          python - <<'PY'
+          import os
+          from tests.test_browser_real_smoke import _binary_major
+          browser = _binary_major(os.environ["CHROME_BINARY"], "Chrome")
+          driver = _binary_major(os.environ["CHROMEDRIVER_PATH"], "ChromeDriver")
+          if browser != driver:
+              raise SystemExit("Provisioned browser and driver majors differ")
+          print("Provisioned browser and driver majors match")
+          PY
+
+      - name: Run explicit local smoke
+        env:
+          CHROME_BINARY: ${{ steps.chrome.outputs.chrome-path }}
+          CHROMEDRIVER_PATH: ${{ steps.chrome.outputs.chromedriver-path }}
+        run: python -m tools.run_browser_smoke
