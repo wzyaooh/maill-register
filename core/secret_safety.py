@@ -51,7 +51,7 @@ SAFE_ERROR_CODES = frozenset({
     "browser_crash", "captcha", "unsupported", "provider_rejected",
     "provider_timeout", "provider_error", "order_expired", "cancel_failed",
     "finish_failed", "sms_timeout", "compensation_claimed", "compensation_claim_lost",
-    "compensation_failed", "invalid_reconciliation_result",
+    "compensation_failed", "invalid_reconciliation_result", "identity_unavailable",
 }) | SMS_ERROR_CODES
 
 # Standard exception class names are retained for compatibility with the
