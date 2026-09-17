@@ -6,6 +6,7 @@ import os
 import sqlite3
 import stat
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -91,15 +92,130 @@ class DatabaseBackupTests(unittest.TestCase):
 
         def connect(*args, **kwargs):
             if not kwargs.get("uri"):
-                self.destination.unlink()
+                if self.destination.exists() or self.destination.is_symlink():
+                    self.destination.unlink()
                 self.destination.write_bytes(b"replacement sentinel")
+                raise sqlite3.OperationalError("synthetic destination failure")
+            return original(*args, **kwargs)
+
+        # Linux may recycle an inode immediately after the final path is
+        # replaced.  Simulate the exact collision so cleanup code cannot use
+        # st_dev/st_ino as ownership proof for the final destination.
+        recycled_inode = types.SimpleNamespace(st_dev=17, st_ino=23)
+        with patch.object(database_backup.sqlite3, "connect", side_effect=connect), \
+                patch.object(database_backup.os, "fstat", return_value=recycled_inode), \
+                patch.object(database_backup.os, "stat", return_value=recycled_inode):
+            with self.assertRaises(sqlite3.OperationalError):
+                database_backup.backup_database(self.source, self.destination)
+        self.assertTrue(self.destination.exists())
+        self.assertEqual(self.destination.read_bytes(), b"replacement sentinel")
+
+    def test_snapshot_does_not_create_final_destination_before_sqlite_work(self):
+        self.create_database()
+        original = sqlite3.connect
+        seen = []
+
+        def connect(*args, **kwargs):
+            if not kwargs.get("uri"):
+                seen.append(self.destination.exists())
                 raise sqlite3.OperationalError("synthetic destination failure")
             return original(*args, **kwargs)
 
         with patch.object(database_backup.sqlite3, "connect", side_effect=connect):
             with self.assertRaises(sqlite3.OperationalError):
                 database_backup.backup_database(self.source, self.destination)
-        self.assertEqual(self.destination.read_bytes(), b"replacement sentinel")
+        self.assertEqual(seen, [False])
+        self.assertFalse(self.destination.exists())
+
+    def test_publish_race_preserves_file_created_after_initial_check(self):
+        self.create_database()
+        original_publish = database_backup._publish_noclobber
+
+        def racing_publish(temporary, destination):
+            destination.write_bytes(b"racing sentinel")
+            return original_publish(temporary, destination)
+
+        with patch.object(
+            database_backup, "_publish_noclobber", side_effect=racing_publish
+        ):
+            with self.assertRaises(FileExistsError):
+                database_backup.backup_database(self.source, self.destination)
+        self.assertEqual(self.destination.read_bytes(), b"racing sentinel")
+        self.assertEqual(list(self.directory.glob(".snapshot-*.tmp")), [])
+
+    def test_publish_race_preserves_symlink_created_after_initial_check(self):
+        self.create_database()
+        original_publish = database_backup._publish_noclobber
+        target = self.directory / "racing-target"
+        target.write_bytes(b"racing target")
+
+        def racing_publish(temporary, destination):
+            destination.symlink_to(target)
+            return original_publish(temporary, destination)
+
+        with patch.object(
+            database_backup, "_publish_noclobber", side_effect=racing_publish
+        ):
+            with self.assertRaises(FileExistsError):
+                database_backup.backup_database(self.source, self.destination)
+        self.assertTrue(self.destination.is_symlink())
+        self.assertEqual(self.destination.resolve(), target.resolve())
+        self.assertEqual(target.read_bytes(), b"racing target")
+        self.assertEqual(list(self.directory.glob(".snapshot-*.tmp")), [])
+
+    def test_directory_sync_failure_keeps_published_snapshot(self):
+        self.create_database()
+        with patch.object(
+            database_backup, "_sync_directory", side_effect=OSError("secret detail")
+        ):
+            with self.assertRaises(database_backup.SnapshotDurabilityUnconfirmed) as raised:
+                database_backup.backup_database(self.source, self.destination)
+        self.assertEqual(raised.exception.code, "snapshot_durability_unconfirmed")
+        self.assertTrue(self.destination.is_file())
+        with contextlib.closing(sqlite3.connect(str(self.destination))) as restored:
+            self.assertEqual(
+                restored.execute("SELECT value FROM fixture").fetchone(),
+                ("committed",),
+            )
+        self.assertEqual(list(self.directory.glob(".snapshot-*.tmp")), [])
+
+    def test_cancelled_snapshot_removes_only_internal_temp_file(self):
+        self.create_database()
+        with patch.object(database_backup, "_sync_file", side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                database_backup.backup_database(self.source, self.destination)
+        self.assertFalse(self.destination.exists())
+        self.assertEqual(list(self.directory.glob(".snapshot-*.tmp")), [])
+
+    def test_unsupported_publish_removes_only_internal_temp_file(self):
+        self.create_database()
+        with patch.object(
+            database_backup,
+            "_publish_noclobber",
+            side_effect=database_backup.SnapshotPublishUnsupported(),
+        ):
+            with self.assertRaises(database_backup.SnapshotPublishUnsupported) as raised:
+                database_backup.backup_database(self.source, self.destination)
+        self.assertEqual(raised.exception.code, "snapshot_publish_unsupported")
+        self.assertFalse(self.destination.exists())
+        self.assertEqual(list(self.directory.glob(".snapshot-*.tmp")), [])
+
+    def test_source_and_parent_symlinks_are_rejected(self):
+        self.create_database()
+        source_alias = self.directory / "source-alias.sqlite"
+        source_alias.symlink_to(self.source)
+        with self.assertRaises(FileExistsError):
+            database_backup.backup_database(source_alias, self.destination)
+        source_alias.unlink()
+
+        actual_parent = self.directory / "actual-parent"
+        actual_parent.mkdir()
+        linked_parent = self.directory / "linked-parent"
+        linked_parent.symlink_to(actual_parent, target_is_directory=True)
+        linked_destination = linked_parent / "snapshot.sqlite"
+        with self.assertRaises(FileExistsError):
+            database_backup.backup_database(self.source, linked_destination)
+        self.assertFalse((actual_parent / "snapshot.sqlite").exists())
 
     def test_missing_source_is_not_created_and_partial_destination_is_removed(self):
         with self.assertRaises(Exception):
