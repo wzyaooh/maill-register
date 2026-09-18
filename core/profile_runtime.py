@@ -2376,6 +2376,26 @@ class BrowserProfileKernel:
         application_shell: Optional[bool],
     ) -> Dict[str, Any]:
         """Combine provider proof with the existing cookie/shell protocol."""
+        # Local/in-process protocol fixtures and non-Gmail redirects have no
+        # provider session slot.  Preserve the established login/challenge
+        # classifier for those pages; a malformed provider response on a real
+        # Gmail slot remains fail-closed as ``identity_unavailable`` below.
+        if (
+            identity.status == "identity_unavailable"
+            and parse_gmail_session_slot(origin) is None
+        ):
+            facts = classify_session_auth(
+                text=text,
+                cookies=cookies,
+                observed_email=None,
+                expected_email=expected_email,
+                manifest=manifest,
+                origin=origin,
+                application_shell=application_shell,
+            )
+            facts["code"] = facts.get("code") or facts.get("status")
+            facts["_provider_proof_valid"] = False
+            return facts
         if identity.status != "authenticated" or not _session_identity._proof_is_current(
             identity.proof
         ):
