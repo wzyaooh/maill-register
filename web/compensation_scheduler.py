@@ -30,6 +30,7 @@ SAFE_STATES = frozenset({
 SAFE_ERROR_CODES = frozenset({
     "", "cancelled", "compensation_claim_lost", "compensation_claimed",
     "compensation_failed", "invalid_reconciliation_result", "provider_error",
+    "identity_unavailable",
     "provider_rejected", "provider_timeout", "reconciliation_failed",
     "scheduler_stale", "status_unavailable", "worker_exception",
 })

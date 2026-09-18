@@ -131,7 +131,7 @@ def _result_error_code(result):
 # small result classifier local means a malformed adapter result cannot turn
 # into an implicit retry merely because it happens to contain a truthy value.
 _TRANSIENT_OPERATION_ERRORS = frozenset({
-    "runtime_unavailable", "network_error", "error", "profile_busy",
+    "runtime_unavailable", "identity_unavailable", "network_error", "error", "profile_busy",
     "timeout", "provider_error", "provider_timeout", "activity_failed",
     "reconciliation_failed", "compensation_claimed",
 })

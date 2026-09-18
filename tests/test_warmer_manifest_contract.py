@@ -23,6 +23,16 @@ def _valid_auth_cookie():
 
 
 class WarmerManifestContractTests(unittest.TestCase):
+    def test_cleanup_failure_is_not_reported_as_authenticated(self):
+        from core.account_warmer import _error_result
+
+        result = _error_result(
+            "user@example.test", "cleanup_failed", "browser did not stop",
+            "profile-1", "playwright",
+        )
+        self.assertFalse(result["success"])
+        self.assertEqual(result["browser_status"], "cleanup_failed")
+
     def test_callers_never_use_path_only_warmer_api(self):
         root = os.path.dirname(os.path.dirname(__file__))
         for relative in ("web/worker.py", "core/runners.py", "core/selenium_runner.py"):

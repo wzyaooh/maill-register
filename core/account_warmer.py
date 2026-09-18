@@ -26,10 +26,8 @@ from core.profile_runtime import (
     ProfileRuntime,
     ProfileRuntimeError,
     ProfileUnavailableError,
-    classify_session_auth,
     inspect_process_stopped,
     identity_is_verified,
-    normalise_observed_email,
 )
 
 logger = logging.getLogger("gmail_creator_postwarmer")
@@ -49,9 +47,10 @@ def _error_result(email: str, code: str, message: str,
         "account_mismatch": "account_mismatch",
         "challenge": "challenge",
         "login_required": "login_required",
+        "identity_unavailable": "identity_unavailable",
         "not_configured": "not_configured",
         "activity_failed": "authenticated",
-        "cleanup_failed": "authenticated",
+        "cleanup_failed": "cleanup_failed",
     }.get(code, "runtime_unavailable")
     return {
         "email": email,
@@ -508,21 +507,6 @@ async def _page_text(page: Any) -> str:
             return ""
 
 
-async def _observed_email_playwright(page: Any) -> Optional[str]:
-    try:
-        value = await _maybe_await(page.evaluate("""() => {
-            const nodes = [...document.querySelectorAll('[data-email], [aria-label*="@"], [title*="@"]')];
-            for (const node of nodes) {
-                const value = node.getAttribute('data-email') || node.getAttribute('aria-label') || node.getAttribute('title');
-                if (value && value.includes('@')) return value;
-            }
-            return null;
-        }"""))
-        return normalise_observed_email(value)
-    except Exception:
-        return None
-
-
 async def _application_shell_playwright(page: Any) -> Optional[bool]:
     try:
         value = await _maybe_await(page.evaluate("""() => Boolean(
@@ -543,19 +527,24 @@ async def _context_cookies(context: Any) -> list:
 
 async def _playwright_authenticated(page: Any, context: Any, email: str,
                                     manifest: Optional[Dict[str, Any]] = None):
+    kernel = BrowserProfileKernel()
     text = await _page_text(page)
-    observed = await _observed_email_playwright(page)
     shell = await _application_shell_playwright(page)
-    facts = classify_session_auth(
-        text=text,
-        cookies=await _context_cookies(context),
-        observed_email=observed,
+    business_origin = str(getattr(page, "url", "") or "")
+    facts = kernel._identity_auth_facts(
+        await kernel._fetch_identity_playwright(
+            context, page,
+            expected_email=email,
+            manifest_email=(manifest or {}).get("email") or email,
+        ),
         expected_email=email,
         manifest=manifest,
-        origin=str(getattr(page, "url", "") or ""),
+        text=text,
+        cookies=await _context_cookies(context),
+        origin=business_origin,
         application_shell=shell,
     )
-    return facts["authenticated"], facts["status"], facts["signals"], observed
+    return facts["authenticated"], facts["status"], facts["signals"], facts.get("observed_email")
 
 
 def _persist_identity_observation(runtime: ProfileRuntime, handle: Any,
@@ -853,23 +842,6 @@ async def _warm_playwright_session(runtime: ProfileRuntime, handle: Any,
                 )
 
 
-def _observed_email_selenium(driver: Any) -> Optional[str]:
-    try:
-        value = driver.execute_script(
-            """return (() => {
-                const nodes = [...document.querySelectorAll('[data-email], [aria-label*="@"], [title*="@"]')];
-                for (const node of nodes) {
-                    const value = node.getAttribute('data-email') || node.getAttribute('aria-label') || node.getAttribute('title');
-                    if (value && value.includes('@')) return value;
-                }
-                return null;
-            })();"""
-        )
-        return normalise_observed_email(value)
-    except Exception:
-        return None
-
-
 def _application_shell_selenium(driver: Any) -> Optional[bool]:
     try:
         value = driver.execute_script("""return Boolean(
@@ -884,22 +856,27 @@ def _application_shell_selenium(driver: Any) -> Optional[bool]:
 def _selenium_authenticated(driver: Any, email: str,
                             manifest: Optional[Dict[str, Any]] = None):
     source = str(getattr(driver, "page_source", "") or "")
-    observed = _observed_email_selenium(driver)
+    kernel = BrowserProfileKernel()
+    business_origin = str(getattr(driver, "current_url", "") or "")
     shell = _application_shell_selenium(driver)
     try:
         cookies = driver.get_cookies() or []
     except Exception:
         cookies = []
-    facts = classify_session_auth(
-        text=source,
-        cookies=cookies,
-        observed_email=observed,
+    facts = kernel._identity_auth_facts(
+        kernel._fetch_identity_selenium(
+            driver,
+            expected_email=email,
+            manifest_email=(manifest or {}).get("email") or email,
+        ),
         expected_email=email,
         manifest=manifest,
-        origin=str(getattr(driver, "current_url", "") or ""),
+        text=source,
+        cookies=cookies,
+        origin=business_origin,
         application_shell=shell,
     )
-    return facts["authenticated"], facts["status"], facts["signals"]
+    return facts["authenticated"], facts["status"], facts["signals"], facts.get("observed_email")
 
 
 def _warm_selenium_session(runtime: ProfileRuntime, handle: Any,
@@ -976,7 +953,7 @@ def _warm_selenium_session(runtime: ProfileRuntime, handle: Any,
                 if runtime_info:
                     runtime.record_runtime(handle, runtime_info)
                 driver.get("https://mail.google.com/")
-                authenticated, status, _signals_value = _selenium_authenticated(
+                authenticated, status, _signals_value, observed = _selenium_authenticated(
                     driver, email, locked_manifest
                 )
                 if status in ("account_mismatch", "challenge"):
@@ -990,7 +967,7 @@ def _warm_selenium_session(runtime: ProfileRuntime, handle: Any,
                 if authenticated:
                     locked_manifest = _persist_identity_observation(
                         runtime, handle, locked_manifest,
-                        _observed_email_selenium(driver),
+                        observed,
                     )
 
                 if not authenticated:
@@ -1007,7 +984,7 @@ def _warm_selenium_session(runtime: ProfileRuntime, handle: Any,
                     password_input.send_keys(password)
                     driver.find_element(By.XPATH, "//button[contains(text(), 'Next')]").click()
                     time.sleep(2)
-                    authenticated, status, _signals_value = _selenium_authenticated(
+                    authenticated, status, _signals_value, observed = _selenium_authenticated(
                         driver, email, locked_manifest
                     )
                     if status in ("account_mismatch", "challenge"):
@@ -1021,7 +998,7 @@ def _warm_selenium_session(runtime: ProfileRuntime, handle: Any,
                     if authenticated:
                         locked_manifest = _persist_identity_observation(
                             runtime, handle, locked_manifest,
-                            _observed_email_selenium(driver),
+                            observed,
                         )
                 if not authenticated:
                     operation_result = _error_result(

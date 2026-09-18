@@ -4,6 +4,8 @@ import tempfile
 import types
 import unittest
 from unittest.mock import patch
+import json
+from core.session_identity import IDENTITY_ENDPOINT
 
 from core.profile_runtime import (
     BrowserProfileKernel,
@@ -13,14 +15,25 @@ from core.profile_runtime import (
 
 
 class _AsyncPage:
-    def __init__(self, text="Inbox Compose Search mail", observed=None):
+    def __init__(self, text="Inbox Compose Search mail", observed=None, provider=False):
         self.url = "https://mail.google.com/mail/u/0/#inbox"
         self.text = text
         self.observed = observed
         self.visited = []
+        self.provider = provider
+        self.closed = False
 
     async def goto(self, url, **_kwargs):
         self.visited.append(url)
+        if "ListAccounts" in url:
+            self.url = IDENTITY_ENDPOINT
+            email = self.observed
+            payload = {"accounts": [] if not email else [{"slot": 0, "email": email, "valid_session": True}]}
+            return types.SimpleNamespace(
+                status=200,
+                url=IDENTITY_ENDPOINT,
+                body=lambda: b")]}\'\n" + json.dumps(payload).encode(),
+            )
         return types.SimpleNamespace(status=200)
 
     async def wait_for_timeout(self, *_args):
@@ -36,14 +49,18 @@ class _AsyncPage:
             return True
         return None
 
+    async def close(self):
+        self.closed = True
+
 
 class _AsyncContext:
-    def __init__(self, cookies=None):
+    def __init__(self, cookies=None, provider=None):
         self._cookies = cookies or [{
             "name": "SID", "value": "live-session", "domain": ".google.com",
             "secure": True, "expires": 4102444800,
         }]
         self.closed = False
+        self.provider = provider
 
     async def cookies(self):
         return self._cookies
@@ -51,11 +68,14 @@ class _AsyncContext:
     async def close(self):
         self.closed = True
 
+    async def new_page(self):
+        return self.provider
+
 
 class _PlaywrightManager:
     def __init__(self, page):
         self.page = page
-        self.context = _AsyncContext()
+        self.context = _AsyncContext(provider=_AsyncPage(observed=page.observed))
         self.closed = False
 
     async def initialize(self, **_kwargs):

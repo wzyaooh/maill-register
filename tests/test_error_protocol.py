@@ -13,6 +13,12 @@ from core.secret_safety import SAFE_ERROR_CODES, normalize_error_code
 
 
 class ErrorProtocolTests(unittest.TestCase):
+    def test_migration_does_not_coerce_non_string_profile_id(self):
+        from core.database import DatabaseManager
+
+        projected = DatabaseManager.migration_profile_projection({"profile_id": 123})
+        self.assertEqual(projected["profile_id"], "")
+
     SMS_CODES = (
         "sms_finish_failed", "sms_poll_failed", "sms_cancel_failed",
         "sms_error", "sms_no_balance", "sms_no_number",
@@ -54,6 +60,7 @@ class ErrorProtocolTests(unittest.TestCase):
         self.assertFalse(engine.should_retry("sms_missing_attempt_context", 1))
         self.assertTrue(engine.should_retry("provider_timeout", 1, operation="health"))
         self.assertTrue(engine.should_retry("provider_timeout", 1, operation="warm"))
+        self.assertIn("identity_unavailable", SAFE_ERROR_CODES)
         self.assertFalse(engine.should_retry("provider_rejected", 1, operation="compensation"))
 
     def test_creation_runner_preserves_stable_tuple_failure_code(self):

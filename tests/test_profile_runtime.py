@@ -335,6 +335,7 @@ class ProfileRuntimeTests(unittest.TestCase):
         self.assertEqual(derive_overall_status("account_mismatch", "locked"), "degraded")
         self.assertEqual(derive_overall_status("profile_conflict", "locked"), "degraded")
         self.assertEqual(derive_overall_status("not_configured", "locked"), "locked")
+        self.assertEqual(derive_overall_status("identity_unavailable", "active"), "degraded")
         self.assertEqual(
             classify_browser_observation({
                 "code": "authenticated", "observed_email": "other@example.test",

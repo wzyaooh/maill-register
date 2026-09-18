@@ -228,12 +228,12 @@ class RetryEngine:
     OPERATION_RETRYABLE_ERRORS = {
         "health": frozenset({
             "runtime_unavailable", "network_error", "error", "profile_busy",
-            "timeout", "provider_error", "provider_timeout",
+            "timeout", "provider_error", "provider_timeout", "identity_unavailable",
         }),
         "warm": frozenset({
             "runtime_unavailable", "network_error", "activity_failed",
             "profile_busy", "timeout", "error", "provider_error",
-            "provider_timeout",
+            "provider_timeout", "identity_unavailable",
         }),
         "compensation": frozenset({
             "provider_error", "provider_timeout", "reconciliation_failed",

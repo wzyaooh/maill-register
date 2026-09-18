@@ -153,6 +153,7 @@ class AccountHealthChecker:
                     "proxy_mismatch": "Configured proxy does not match the profile",
                     "proxy_unavailable": "Bound proxy is unavailable",
                     "runtime_unavailable": "Browser runtime is unavailable",
+                    "identity_unavailable": "Browser session identity is unavailable",
                     "profile_conflict": "Browser profile binding conflicts with the account",
                 }.get(status, "Browser health is unavailable")
             if not code and status not in ("authenticated", "not_configured"):

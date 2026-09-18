@@ -7,6 +7,7 @@ import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
 from core.database import DatabaseManager
+from core.session_identity import IDENTITY_ENDPOINT
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -17,6 +18,8 @@ def _auth_scenario(name):
         "final_url": "https://mail.google.com/mail/u/0/#inbox",
         "text": "Inbox Compose Search mail",
         "observed_email": "user@gmail.com",
+        "provider_email": "user@gmail.com",
+        "provider_valid": True,
         "application_shell": True,
         "cookies": [{
             "name": "SID", "value": "live-registration-session",
@@ -42,9 +45,25 @@ def _auth_scenario(name):
         scenario["application_shell"] = False
     elif name == "missing_identity":
         scenario["observed_email"] = None
+        scenario["provider_email"] = None
     elif name == "mismatched_identity":
         scenario["observed_email"] = "other@gmail.com"
+        scenario["provider_email"] = "other@gmail.com"
     return scenario
+
+
+def _provider_body(scenario):
+    accounts = []
+    if scenario.get("provider_email"):
+        accounts.append({
+            "slot": 0,
+            "email": scenario["provider_email"],
+            "valid_session": scenario.get("provider_valid", True),
+        })
+    payload = {"accounts": accounts}
+    return b")]}\'\n" + __import__("json").dumps(
+        payload, separators=(",", ":")
+    ).encode()
 
 
 class _PlaywrightElement:
@@ -64,15 +83,43 @@ class _PlaywrightElement:
         return None
 
 
+class _ProviderResponse:
+    status = 200
+
+    def __init__(self, body):
+        self._body = body
+
+    async def body(self):
+        return self._body
+
+
+class _PlaywrightProviderPage:
+    def __init__(self, scenario):
+        self.scenario = scenario
+        self.url = "about:blank"
+        self.closed = False
+
+    async def goto(self, _url, **_kwargs):
+        self.url = IDENTITY_ENDPOINT
+        return _ProviderResponse(_provider_body(self.scenario))
+
+    async def close(self):
+        self.closed = True
+
+
 class _PlaywrightContext:
     def __init__(self, scenario):
         self.scenario = scenario
+        self.provider_page = _PlaywrightProviderPage(scenario)
 
     async def clear_cookies(self):
         return None
 
     async def cookies(self):
         return list(self.scenario["cookies"])
+
+    async def new_page(self):
+        return self.provider_page
 
 
 class _PlaywrightPage:
@@ -158,21 +205,44 @@ class _SeleniumDriver:
         self.current_url = "https://accounts.google.com/signup"
         self.visited = []
         self.service = types.SimpleNamespace(process=_Process())
+        self.handles = ["business"]
+        self.current_window_handle = "business"
+        self.switch_to = types.SimpleNamespace(
+            new_window=self._new_window,
+            window=self._switch_window,
+        )
+
+    def _new_window(self, _kind):
+        self.handles.append("identity-tab")
+        self.current_window_handle = "identity-tab"
+
+    def _switch_window(self, handle):
+        if handle not in self.handles:
+            raise RuntimeError("missing window")
+        self.current_window_handle = handle
+
+    @property
+    def window_handles(self):
+        return list(self.handles)
 
     @property
     def page_source(self):
+        if self.current_window_handle == "identity-tab":
+            return _provider_body(self.scenario).decode()
         return self.scenario["text"]
 
     def get(self, url):
         self.visited.append(url)
-        if url == "https://mail.google.com/":
+        if "ListAccounts" in url:
+            self.current_url = IDENTITY_ENDPOINT
+        elif url == "https://mail.google.com/":
             self.current_url = self.scenario["final_url"]
         else:
             self.current_url = url
 
     def execute_script(self, script, *_args):
-        if "querySelectorAll('[data-email" in script:
-            return self.scenario["observed_email"]
+        if "document.body" in script:
+            return _provider_body(self.scenario).decode()
         if "[role=\"main\"]" in script:
             return self.scenario["application_shell"]
         return None
@@ -186,6 +256,11 @@ class _SeleniumDriver:
         if self.close_mode != "live_process":
             self.service.process.exit_code = 0
         return None
+
+    def close(self):
+        if self.current_window_handle != "business":
+            self.handles.remove(self.current_window_handle)
+            self.current_window_handle = "business"
 
 
 class _Lease:
@@ -450,7 +525,7 @@ class RegistrationProfileLifecycleContractTests(unittest.TestCase):
                         adapter.page.visited[-1:], ["https://mail.google.com/"]
                     )
                 else:
-                    self.assertEqual(adapter.visited[-1:], ["https://mail.google.com/"])
+                    self.assertEqual(adapter.visited[-1:], [IDENTITY_ENDPOINT])
                 self.assertTrue(accounts.save.called)
                 runtime.bind.assert_called_once()
                 runtime.mark_ready.assert_called_once()

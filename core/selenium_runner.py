@@ -410,17 +410,25 @@ def _registration_session_facts(driver, expected_email):
     except Exception:
         return classify_session_auth(expected_email=expected_email)
 
-    observed_email = BrowserProfileKernel._selenium_identity(driver)
     application_shell = BrowserProfileKernel._selenium_application_shell(driver)
+    business_origin = getattr(driver, "current_url", "")
     try:
         cookies = driver.get_cookies()
     except Exception:
         cookies = []
-    return classify_session_auth(
+    kernel = BrowserProfileKernel()
+    identity = kernel._fetch_identity_selenium(
+        driver,
+        expected_email=expected_email,
+        manifest_email=expected_email,
+    )
+    return kernel._identity_auth_facts(
+        identity,
+        expected_email=expected_email,
+        manifest={},
         text=str(getattr(driver, "page_source", "") or ""),
-        cookies=cookies, observed_email=observed_email,
-        expected_email=expected_email, manifest={},
-        origin=getattr(driver, "current_url", ""),
+        cookies=cookies,
+        origin=business_origin,
         application_shell=application_shell,
     )
 

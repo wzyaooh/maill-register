@@ -390,6 +390,14 @@ def resolve_session_identity(
     return IdentityObservation("authenticated", proof, "")
 
 
+def _proof_is_current(proof: Any) -> bool:
+    """Return whether a proof was created by this resolver in this process."""
+    return (
+        isinstance(proof, SessionIdentityProof)
+        and getattr(proof, "_evidence_marker", None) is _PROOF_EVIDENCE_MARKER
+    )
+
+
 __all__ = [
     "IDENTITY_PROVIDER", "IDENTITY_PROVIDER_VERSION", "IDENTITY_ENDPOINT",
     "MAX_RESPONSE_BYTES", "MAX_RECORDS", "NAVIGATION_TIMEOUT_MS",

@@ -24,6 +24,18 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 from urllib.parse import unquote, urlsplit
 
+from core import session_identity as _session_identity
+from core.session_identity import (
+    IDENTITY_ENDPOINT,
+    MAX_RESPONSE_BYTES,
+    NAVIGATION_TIMEOUT_MS,
+    IdentityObservation,
+    IdentityProtocolError,
+    parse_google_accounts_v1,
+    parse_gmail_session_slot,
+    resolve_session_identity,
+)
+
 logger = logging.getLogger("gmail_creator_profile_runtime")
 
 try:  # pragma: no cover - Windows is not used by the CI image, but supported.
@@ -41,7 +53,7 @@ BROWSER_STATUSES = (
     "not_configured", "authenticated", "login_required", "challenge",
     "account_mismatch", "profile_conflict", "profile_busy", "runtime_unavailable",
     "runtime_mismatch", "proxy_unavailable", "proxy_mismatch",
-    "profile_unavailable", "cleanup_failed", "error",
+    "profile_unavailable", "identity_unavailable", "cleanup_failed", "error",
 )
 MAILBOX_STATUSES = (
     "not_configured", "active", "password_changed", "locked", "suspended",
@@ -492,6 +504,7 @@ def derive_overall_status(browser_status: str, mailbox_status: str) -> str:
         "profile_busy", "account_mismatch", "profile_conflict",
         "runtime_mismatch", "proxy_mismatch", "proxy_unavailable",
         "profile_unavailable", "cleanup_failed",
+        "identity_unavailable",
     ):
         # These are profile/runtime facts, not evidence that the mailbox is
         # locked.  Preserve them as degraded even when IMAP reports a generic
@@ -2291,6 +2304,266 @@ class BrowserProfileKernel:
         return value
 
     @staticmethod
+    async def _close_page_uncancelled(page: Any):
+        """Close an identity page/tab to completion despite cancellation."""
+        try:
+            value = page.close()
+        except BaseException:
+            return False, False
+        task = asyncio.ensure_future(BrowserProfileKernel._maybe_await(value))
+        cancellation_seen = False
+        while True:
+            try:
+                await asyncio.shield(task)
+                break
+            except asyncio.CancelledError:
+                cancellation_seen = True
+                continue
+            except BaseException:
+                return False, cancellation_seen
+        try:
+            task.result()
+        except BaseException:
+            return False, cancellation_seen
+        return True, cancellation_seen
+
+    @staticmethod
+    async def _response_body(response: Any) -> bytes:
+        """Read one complete browser response, rejecting oversized payloads."""
+        reader = getattr(response, "body", None)
+        if not callable(reader):
+            raise IdentityProtocolError("identity_unavailable")
+        try:
+            body = await BrowserProfileKernel._maybe_await(reader())
+        except BaseException:
+            raise IdentityProtocolError("identity_unavailable")
+        if isinstance(body, str):
+            body = body.encode("utf-8")
+        if not isinstance(body, (bytes, bytearray)):
+            raise IdentityProtocolError("identity_unavailable")
+        body = bytes(body)
+        if len(body) > MAX_RESPONSE_BYTES:
+            raise IdentityProtocolError("identity_unavailable")
+        return body
+
+    @staticmethod
+    def _body_from_selenium(driver: Any) -> bytes:
+        try:
+            value = driver.execute_script(
+                "return document.body ? document.body.innerText : '';"
+            )
+        except BaseException:
+            raise IdentityProtocolError("identity_unavailable")
+        if isinstance(value, str):
+            body = value.encode("utf-8")
+        elif isinstance(value, (bytes, bytearray)):
+            body = bytes(value)
+        else:
+            raise IdentityProtocolError("identity_unavailable")
+        if len(body) > MAX_RESPONSE_BYTES:
+            raise IdentityProtocolError("identity_unavailable")
+        return body
+
+    @staticmethod
+    def _identity_auth_facts(
+        identity: IdentityObservation,
+        *,
+        expected_email: Optional[str],
+        manifest: Optional[Dict[str, Any]],
+        text: str,
+        cookies: Any,
+        origin: str,
+        application_shell: Optional[bool],
+    ) -> Dict[str, Any]:
+        """Combine provider proof with the existing cookie/shell protocol."""
+        if identity.status != "authenticated" or not _session_identity._proof_is_current(
+            identity.proof
+        ):
+            return {
+                "authenticated": False,
+                "status": identity.status,
+                "code": identity.error_code or identity.status,
+                "signals": _semantic_signals(text),
+                "cookie_names": _cookie_names(cookies),
+                "auth_cookie": False,
+                "trusted_origin": False,
+                "application_shell": application_shell is True,
+                "identity_bound": False,
+                "identity_fresh": False,
+                "identity_confidence": "unknown",
+                "observed_email": None,
+                "session_slot": None,
+                "_evidence_token": None,
+                "_provider_proof_valid": False,
+            }
+
+        proof = identity.proof
+        facts = classify_session_auth(
+            text=text,
+            cookies=cookies,
+            observed_email=proof.observed_email,
+            expected_email=expected_email,
+            manifest=manifest,
+            origin=origin,
+            application_shell=application_shell,
+        )
+        provider_valid = _session_identity._proof_is_current(proof)
+        if not provider_valid:
+            facts.update({
+                "authenticated": False,
+                "status": "identity_unavailable",
+                "code": "identity_unavailable",
+                "_evidence_token": None,
+            })
+        elif not facts.get("authenticated"):
+            # Preserve the classifier's explicit cookie/shell/login/challenge
+            # result.  The provider proof alone is never session auth.
+            facts["_evidence_token"] = None
+        facts["observed_email"] = proof.observed_email
+        facts["session_slot"] = proof.session_slot
+        facts["_provider_proof_valid"] = provider_valid
+        return facts
+
+    async def _fetch_identity_playwright(
+        self,
+        context: Any,
+        business_page: Any,
+        *,
+        expected_email: Optional[str] = None,
+        manifest_email: Optional[str] = None,
+        timeout_ms: int = NAVIGATION_TIMEOUT_MS,
+    ) -> IdentityObservation:
+        """Fetch provider identity in a temporary page of the same context."""
+        business_url = _safe_url(getattr(business_page, "url", ""))
+        slot = parse_gmail_session_slot(business_url)
+        if slot is None or context is None or not callable(getattr(context, "new_page", None)):
+            return IdentityObservation("identity_unavailable", None, "identity_unavailable")
+        temporary = None
+        observation = IdentityObservation("identity_unavailable", None, "identity_unavailable")
+        cancellation_seen = False
+        try:
+            temporary = await self._maybe_await(context.new_page())
+            if temporary is None:
+                return observation
+            response = await self._maybe_await(
+                temporary.goto(
+                    IDENTITY_ENDPOINT,
+                    timeout=NAVIGATION_TIMEOUT_MS,
+                    wait_until="domcontentloaded",
+                )
+            )
+            body = await self._response_body(response)
+            final_url = _safe_url(
+                getattr(response, "url", None) or getattr(temporary, "url", "")
+            )
+            records = parse_google_accounts_v1(body, final_url)
+            observation = resolve_session_identity(
+                records,
+                session_slot=slot,
+                expected_email=expected_email,
+                manifest_email=manifest_email,
+                final_origin=business_url,
+            )
+        except IdentityProtocolError as exc:
+            observation = IdentityObservation(exc.status, None, exc.code)
+        except asyncio.CancelledError:
+            cancellation_seen = True
+            observation = IdentityObservation("cleanup_failed", None, "cleanup_failed")
+        except BaseException:
+            observation = IdentityObservation(
+                "identity_unavailable", None, "identity_unavailable"
+            )
+        finally:
+            if temporary is not None:
+                closed, close_cancelled = await self._close_page_uncancelled(temporary)
+                cancellation_seen = cancellation_seen or close_cancelled
+                if not closed:
+                    observation = IdentityObservation(
+                        "cleanup_failed", None, "cleanup_failed"
+                    )
+        if cancellation_seen:
+            raise asyncio.CancelledError()
+        return observation
+
+    def _fetch_identity_selenium(
+        self,
+        driver: Any,
+        *,
+        expected_email: Optional[str] = None,
+        manifest_email: Optional[str] = None,
+        timeout_ms: int = NAVIGATION_TIMEOUT_MS,
+    ) -> IdentityObservation:
+        """Fetch provider identity in a temporary tab of the same driver."""
+        business_url = _safe_url(getattr(driver, "current_url", ""))
+        slot = parse_gmail_session_slot(business_url)
+        if slot is None:
+            return IdentityObservation("identity_unavailable", None, "identity_unavailable")
+        try:
+            original_handle = driver.current_window_handle
+            original_handles = tuple(driver.window_handles)
+        except BaseException:
+            return IdentityObservation("identity_unavailable", None, "identity_unavailable")
+
+        temporary_handle = None
+        observation = IdentityObservation("identity_unavailable", None, "identity_unavailable")
+        cleanup_failed = False
+        try:
+            switch_to = getattr(driver, "switch_to", None)
+            new_window = getattr(switch_to, "new_window", None)
+            if callable(new_window):
+                new_window("tab")
+            else:
+                driver.execute_script("window.open('about:blank', '_blank');")
+            handles_after_open = tuple(driver.window_handles)
+            candidates = [item for item in handles_after_open if item not in original_handles]
+            if len(candidates) != 1:
+                raise IdentityProtocolError("identity_unavailable")
+            temporary_handle = candidates[0]
+            switch_to.window(temporary_handle)
+            set_timeout = getattr(driver, "set_page_load_timeout", None)
+            if callable(set_timeout):
+                set_timeout(float(timeout_ms) / 1000.0)
+            driver.get(IDENTITY_ENDPOINT)
+            body = self._body_from_selenium(driver)
+            final_url = _safe_url(getattr(driver, "current_url", ""))
+            records = parse_google_accounts_v1(body, final_url)
+            observation = resolve_session_identity(
+                records,
+                session_slot=slot,
+                expected_email=expected_email,
+                manifest_email=manifest_email,
+                final_origin=business_url,
+            )
+        except IdentityProtocolError as exc:
+            observation = IdentityObservation(exc.status, None, exc.code)
+        except BaseException:
+            observation = IdentityObservation(
+                "identity_unavailable", None, "identity_unavailable"
+            )
+        finally:
+            if temporary_handle is not None:
+                try:
+                    switch_to.window(temporary_handle)
+                    driver.close()
+                except BaseException:
+                    cleanup_failed = True
+            try:
+                switch_to.window(original_handle)
+            except BaseException:
+                cleanup_failed = True
+            try:
+                final_handles = tuple(driver.window_handles)
+                if set(final_handles) != set(original_handles):
+                    cleanup_failed = True
+                if driver.current_window_handle != original_handle:
+                    cleanup_failed = True
+            except BaseException:
+                cleanup_failed = True
+        if cleanup_failed:
+            return IdentityObservation("cleanup_failed", None, "cleanup_failed")
+        return observation
+
+    @staticmethod
     async def _page_text(page: Any) -> str:
         try:
             return await page.content()
@@ -2302,26 +2575,6 @@ class BrowserProfileKernel:
                 return ""
 
     @staticmethod
-    async def _playwright_identity(page: Any) -> Optional[str]:
-        # Google account pages often expose the email in aria labels or body
-        # text.  This is an observation only; it never enters credentials.
-        try:
-            value = await page.evaluate("""() => {
-                const nodes = [...document.querySelectorAll('[data-email], [aria-label*="@"], [title*="@"]')];
-                for (const node of nodes) {
-                    const value = node.getAttribute('data-email') || node.getAttribute('aria-label') || node.getAttribute('title');
-                    if (value && value.includes('@')) return value;
-                }
-                return null;
-            }""")
-            observed = normalise_observed_email(value)
-            if observed:
-                return observed
-        except Exception:
-            pass
-        return None
-
-    @staticmethod
     async def _playwright_application_shell(page: Any) -> Optional[bool]:
         try:
             value = await page.evaluate("""() => Boolean(
@@ -2329,23 +2582,6 @@ class BrowserProfileKernel:
                     a[href*="#inbox"], [data-view-id], [data-mail-shell])
             )""")
             return value if isinstance(value, bool) else None
-        except Exception:
-            return None
-
-    @staticmethod
-    def _selenium_identity(driver: Any) -> Optional[str]:
-        try:
-            value = driver.execute_script(
-                """return (() => {
-                    const nodes = [...document.querySelectorAll('[data-email], [aria-label*="@"], [title*="@"]')];
-                    for (const node of nodes) {
-                        const value = node.getAttribute('data-email') || node.getAttribute('aria-label') || node.getAttribute('title');
-                        if (value && value.includes('@')) return value;
-                    }
-                    return null;
-                })();"""
-            )
-            return normalise_observed_email(value)
         except Exception:
             return None
 
@@ -2436,17 +2672,25 @@ class BrowserProfileKernel:
                         pass
                     url = _safe_url(getattr(page, "url", ""))
                     text = await self._page_text(page)
-                    observed_email = await self._playwright_identity(page)
                     application_shell = await self._playwright_application_shell(page)
                     cookies = []
                     try:
                         cookies = await self._maybe_await(manager.context.cookies())
                     except Exception:
                         pass
-                    facts = classify_session_auth(
-                        text=text, cookies=cookies, observed_email=observed_email,
-                        expected_email=expected_email, manifest=manifest,
-                        origin=_origin(url),
+                    identity = await self._fetch_identity_playwright(
+                        manager.context,
+                        page,
+                        expected_email=expected_email,
+                        manifest_email=manifest.get("email"),
+                    )
+                    facts = self._identity_auth_facts(
+                        identity,
+                        expected_email=expected_email,
+                        manifest=manifest,
+                        text=text,
+                        cookies=cookies,
+                        origin=url,
                         application_shell=application_shell,
                     )
                     signals = facts["signals"]
@@ -2457,8 +2701,10 @@ class BrowserProfileKernel:
                         final_url=url, origin=_origin(url),
                         response_status=getattr(response, "status", None),
                         redirect_chain=[], auth_cookie_names=facts["cookie_names"],
-                        auth_cookie=facts["auth_cookie"], observed_email=observed_email,
+                        auth_cookie=facts["auth_cookie"], observed_email=facts.get("observed_email"),
                         application_shell=facts["application_shell"],
+                        session_slot=facts.get("session_slot"),
+                        identity_proof=facts.get("_provider_proof_valid") is True,
                         identity_state=manifest.get("identity_state", ""),
                         identity_verified=manifest.get("identity_verified") is True,
                         identity_confidence=facts["identity_confidence"],
@@ -2610,17 +2856,24 @@ class BrowserProfileKernel:
                     driver.get("https://mail.google.com/")
                     url = _safe_url(getattr(driver, "current_url", ""))
                     source = str(getattr(driver, "page_source", "") or "")
-                    observed_email = self._selenium_identity(driver)
                     application_shell = self._selenium_application_shell(driver)
                     cookies = []
                     try:
                         cookies = driver.get_cookies()
                     except Exception:
                         pass
-                    facts = classify_session_auth(
-                        text=source, cookies=cookies, observed_email=observed_email,
-                        expected_email=expected_email, manifest=manifest,
-                        origin=_origin(url),
+                    identity = self._fetch_identity_selenium(
+                        driver,
+                        expected_email=expected_email,
+                        manifest_email=manifest.get("email"),
+                    )
+                    facts = self._identity_auth_facts(
+                        identity,
+                        expected_email=expected_email,
+                        manifest=manifest,
+                        text=source,
+                        cookies=cookies,
+                        origin=url,
                         application_shell=application_shell,
                     )
                     signals = facts["signals"]
@@ -2630,8 +2883,10 @@ class BrowserProfileKernel:
                         _evidence_token=facts.get("_evidence_token"),
                         final_url=url, origin=_origin(url), response_status=None,
                         redirect_chain=[], auth_cookie_names=facts["cookie_names"],
-                        auth_cookie=facts["auth_cookie"], observed_email=observed_email,
+                        auth_cookie=facts["auth_cookie"], observed_email=facts.get("observed_email"),
                         application_shell=facts["application_shell"],
+                        session_slot=facts.get("session_slot"),
+                        identity_proof=facts.get("_provider_proof_valid") is True,
                         identity_state=manifest.get("identity_state", ""),
                         identity_verified=manifest.get("identity_verified") is True,
                         identity_confidence=facts["identity_confidence"],

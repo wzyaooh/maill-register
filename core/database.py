@@ -33,6 +33,7 @@ _BROWSER_STATUS_VALUES = frozenset({
     "account_mismatch", "profile_busy", "runtime_mismatch",
     "proxy_mismatch", "proxy_unavailable", "runtime_unavailable",
     "profile_conflict", "profile_unavailable", "network_error", "error",
+    "identity_unavailable", "cleanup_failed",
 })
 _MAILBOX_STATUS_VALUES = frozenset({
     "active", "not_configured", "password_changed", "locked", "suspended",
@@ -486,7 +487,11 @@ class DatabaseManager:
     def migration_profile_projection(account):
         """Project imported profile metadata without manufacturing trust."""
         item = account if isinstance(account, dict) else {}
-        profile_id = str(item.get("profile_id") or "").strip()
+        raw_profile_id = item.get("profile_id")
+        # Imports must preserve the direct API's type contract.  Coercing
+        # numeric/boolean ids into strings can accidentally bind an unrelated
+        # directory name, even though the resulting row is fail-closed.
+        profile_id = raw_profile_id.strip() if isinstance(raw_profile_id, str) else ""
         engine = str(item.get("engine") or "").strip()
         profile_state = str(item.get("profile_state") or "").strip()
         identity_state = str(item.get("identity_state") or "").strip()

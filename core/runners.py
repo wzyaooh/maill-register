@@ -352,17 +352,25 @@ async def _registration_session_facts(page, expected_email):
     except Exception:
         return classify_session_auth(expected_email=expected_email)
 
-    text = await BrowserProfileKernel._page_text(page)
-    observed_email = await BrowserProfileKernel._playwright_identity(page)
+    kernel = BrowserProfileKernel()
+    text = await kernel._page_text(page)
     application_shell = await BrowserProfileKernel._playwright_application_shell(page)
     cookies = []
     try:
         cookies = await page.context.cookies()
     except Exception:
         pass
-    return classify_session_auth(
-        text=text, cookies=cookies, observed_email=observed_email,
-        expected_email=expected_email, manifest={},
+    identity = await kernel._fetch_identity_playwright(
+        getattr(page, "context", None), page,
+        expected_email=expected_email,
+        manifest_email=expected_email,
+    )
+    return kernel._identity_auth_facts(
+        identity,
+        expected_email=expected_email,
+        manifest={},
+        text=text,
+        cookies=cookies,
         origin=getattr(page, "url", ""),
         application_shell=application_shell,
     )
