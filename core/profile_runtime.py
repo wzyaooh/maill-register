@@ -2384,6 +2384,26 @@ class BrowserProfileKernel:
             identity.status == "identity_unavailable"
             and parse_gmail_session_slot(origin) is None
         ):
+            signals = _semantic_signals(text)
+            if _trusted_origin(origin) and not (
+                signals["login_required"] or signals["challenge"]
+            ):
+                return {
+                    "authenticated": False,
+                    "status": "identity_unavailable",
+                    "code": "identity_unavailable",
+                    "signals": signals,
+                    "cookie_names": _cookie_names(cookies),
+                    "auth_cookie": False,
+                    "trusted_origin": True,
+                    "application_shell": application_shell is True,
+                    "identity_bound": False,
+                    "identity_fresh": False,
+                    "identity_confidence": "unknown",
+                    "observed_email": None,
+                    "_evidence_token": None,
+                    "_provider_proof_valid": False,
+                }
             facts = classify_session_auth(
                 text=text,
                 cookies=cookies,

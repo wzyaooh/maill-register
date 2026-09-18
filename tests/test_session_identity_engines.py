@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import patch
 
 from core.profile_runtime import BrowserProfileKernel, ProfileRuntime
-from core.session_identity import IDENTITY_ENDPOINT
+from core.session_identity import IDENTITY_ENDPOINT, IdentityObservation
 
 
 def _provider_body(*records):
@@ -164,6 +164,20 @@ class _SeleniumDriver:
 
 
 class SessionIdentityEngineTests(unittest.TestCase):
+    def test_missing_slot_cannot_authenticate_from_native_manifest(self):
+        facts = BrowserProfileKernel._identity_auth_facts(
+            IdentityObservation("identity_unavailable", None, "identity_unavailable"),
+            expected_email="a@example.test",
+            manifest={"identity_state": "native", "email": "a@example.test"},
+            text="Inbox Compose", origin="https://mail.google.com/",
+            cookies=[{"name": "SID", "value": "live", "domain": ".google.com",
+                      "secure": True, "expires": 4102444800}],
+            application_shell=True,
+        )
+        self.assertFalse(facts["authenticated"])
+        self.assertEqual(facts["status"], "identity_unavailable")
+        self.assertIsNone(facts["_evidence_token"])
+
     def _runtime(self, engine):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
