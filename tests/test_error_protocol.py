@@ -16,8 +16,8 @@ class ErrorProtocolTests(unittest.TestCase):
     def test_migration_does_not_coerce_non_string_profile_id(self):
         from core.database import DatabaseManager
 
-        projected = DatabaseManager.migration_profile_projection({"profile_id": 123})
-        self.assertEqual(projected["profile_id"], "")
+        with self.assertRaisesRegex(ValueError, "profile_id"):
+            DatabaseManager.migration_profile_projection({"profile_id": 123})
 
     SMS_CODES = (
         "sms_finish_failed", "sms_poll_failed", "sms_cancel_failed",
