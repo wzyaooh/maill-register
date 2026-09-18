@@ -659,11 +659,12 @@ async def _warm_playwright_session(runtime: ProfileRuntime, handle: Any,
                 ))
                 authenticated, status, _signals_value, observed = \
                     await _playwright_authenticated(page, context, email, locked_manifest)
-                if status in ("account_mismatch", "challenge"):
+                if status in ("account_mismatch", "challenge", "identity_unavailable", "cleanup_failed"):
                     operation_result = _error_result(
                         email, status,
                         "Browser profile identity does not match the account" if status == "account_mismatch"
-                        else "Browser profile requires a challenge",
+                        else ("Browser profile requires a challenge" if status == "challenge"
+                              else "Browser session identity is unavailable"),
                         handle.profile_id, "playwright",
                     )
                     return operation_result
@@ -694,11 +695,12 @@ async def _warm_playwright_session(runtime: ProfileRuntime, handle: Any,
 
                     authenticated, status, _signals_value, observed = \
                         await _playwright_authenticated(page, context, email, locked_manifest)
-                    if status in ("account_mismatch", "challenge"):
+                    if status in ("account_mismatch", "challenge", "identity_unavailable", "cleanup_failed"):
                         operation_result = _error_result(
                             email, status,
                             "Login resolved to a different account" if status == "account_mismatch"
-                            else "Login challenge detected",
+                            else ("Login challenge detected" if status == "challenge"
+                                  else "Browser session identity is unavailable"),
                             handle.profile_id, "playwright",
                         )
                         return operation_result
@@ -956,11 +958,12 @@ def _warm_selenium_session(runtime: ProfileRuntime, handle: Any,
                 authenticated, status, _signals_value, observed = _selenium_authenticated(
                     driver, email, locked_manifest
                 )
-                if status in ("account_mismatch", "challenge"):
+                if status in ("account_mismatch", "challenge", "identity_unavailable", "cleanup_failed"):
                     operation_result = _error_result(
                         email, status,
                         "Browser profile identity does not match the account" if status == "account_mismatch"
-                        else "Browser profile requires a challenge",
+                        else ("Browser profile requires a challenge" if status == "challenge"
+                              else "Browser session identity is unavailable"),
                         handle.profile_id, "selenium",
                     )
                     return operation_result
@@ -987,11 +990,12 @@ def _warm_selenium_session(runtime: ProfileRuntime, handle: Any,
                     authenticated, status, _signals_value, observed = _selenium_authenticated(
                         driver, email, locked_manifest
                     )
-                    if status in ("account_mismatch", "challenge"):
+                    if status in ("account_mismatch", "challenge", "identity_unavailable", "cleanup_failed"):
                         operation_result = _error_result(
                             email, status,
                             "Login resolved to a different account" if status == "account_mismatch"
-                            else "Login challenge detected",
+                            else ("Login challenge detected" if status == "challenge"
+                                  else "Browser session identity is unavailable"),
                             handle.profile_id, "selenium",
                         )
                         return operation_result
