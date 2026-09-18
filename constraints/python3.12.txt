@@ -1,0 +1,3 @@
+# Generated from the supported Python 3.12 environment; refresh in a clean venv.
+-r python3.9.txt
+playwright==1.60.0

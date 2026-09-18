@@ -41,7 +41,20 @@ if [[ "${1:-}" == "--setup" ]]; then
         "$BOOTSTRAP" -c 'import sys; sys.exit("Python 3.9 or newer is required; Python 3.10+ is recommended.") if sys.version_info < (3, 9) else None'
         "$BOOTSTRAP" -m venv "$VENV"
     fi
-    "$PYTHON_EXEC" -m pip install -r "$ROOT/requirements.txt"
+    PY_MINOR="$($PYTHON_EXEC -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
+    case "$PY_MINOR" in
+        3.9|3.10|3.11|3.12) ;;
+        *)
+            printf '%s\n' "Unsupported Python minor; supported versions are 3.9, 3.10, 3.11, 3.12." >&2
+            exit 1
+            ;;
+    esac
+    CONSTRAINTS="$ROOT/constraints/python${PY_MINOR}.txt"
+    if [[ ! -f "$CONSTRAINTS" ]]; then
+        printf '%s\n' "Missing dependency constraints: $CONSTRAINTS" >&2
+        exit 1
+    fi
+    "$PYTHON_EXEC" -m pip install -r "$ROOT/requirements.txt" -c "$CONSTRAINTS"
     "$PYTHON_EXEC" -m playwright install chromium
     "$PYTHON_EXEC" -m web.runtime "$MODE"
     printf '\nSetup complete. Configure %s/runtime/%s/.env, then run ./start.sh %s\n' "$ROOT" "$MODE" "$MODE"

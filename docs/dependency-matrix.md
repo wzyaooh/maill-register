@@ -40,6 +40,31 @@ before browser tests run. The separate real-browser job is required on every
 push and pull request. Manual dispatch still offers the `real_browser_smoke`
 input; set it to `true` to include that job in a manually requested run.
 
+## Reproducible dependency constraints
+
+Supported Python minors have reviewed constraint inputs at
+`constraints/python3.9.txt`, `constraints/python3.10.txt`,
+`constraints/python3.11.txt`, and `constraints/python3.12.txt`. Validate a
+clean environment with the matching interpreter, for example:
+
+```bash
+python3.11 -m pip install -r requirements.txt -c constraints/python3.11.txt
+python3.11 -m pip check
+```
+
+`start.sh <dev|prod> --setup` selects the file from the virtual environment's
+Python minor and fails closed for unsupported versions. To refresh a file,
+resolve `requirements.txt` in a clean virtual environment for that exact
+Python minor, review the complete `pip freeze` output, run `pip check`, and
+commit the resulting constraint plus the verification record. Constraints
+improve reproducibility but do not prove compatibility with external Gmail,
+SMS, proxy, Telegram, or Appium services.
+
+The CI matrix includes Ubuntu, macOS, and a Windows 3.11 core job. Windows
+exercises SQLite and file-lock semantics; browser smoke remains an explicit
+localhost gate. Local green results do not claim remote CI is green until the
+corresponding GitHub Actions jobs complete.
+
 ## Browser Contract
 
 Registration writes the engine, browser channel/major, identity and proxy
