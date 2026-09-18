@@ -286,6 +286,41 @@ class ProfilePersistenceTests(unittest.TestCase):
             self.assertEqual(account["browser_status"], "not_configured")
             self.assertEqual(account["overall_status"], "unknown")
 
+    def test_json_migration_rejects_non_string_profile_id_without_creating_account(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "accounts.json"
+            source.write_text(json.dumps([{
+                "email": "malformed@example.test",
+                "password": "secret",
+                "profile_id": 123,
+            }]), encoding="utf-8")
+            database = DatabaseManager(str(root / "accounts.db"))
+
+            self.assertEqual(database.run_migration(str(source), str(root / "missing.txt")), 0)
+            self.assertEqual(database.get_account_count(), 0)
+
+    def test_json_migration_isolates_malformed_profile_id_rows(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "accounts.json"
+            source.write_text(json.dumps([
+                {
+                    "email": "malformed@example.test",
+                    "password": "secret",
+                    "profile_id": True,
+                },
+                {
+                    "email": "valid@example.test",
+                    "password": "secret",
+                },
+            ]), encoding="utf-8")
+            database = DatabaseManager(str(root / "accounts.db"))
+
+            self.assertEqual(database.run_migration(str(source), str(root / "missing.txt")), 1)
+            accounts = database.get_all_accounts()
+            self.assertEqual([item["email"] for item in accounts], ["valid@example.test"])
+
     def test_playwright_warmer_uses_existing_authenticated_profile(self):
         provider_body = b")]}\'\n" + json.dumps({
             "accounts": [{

@@ -135,26 +135,29 @@ class AccountManager:
                 count = 0
                 for acc in data:
                     if isinstance(acc, dict) and "email" in acc:
-                        profile = self.db.migration_profile_projection(acc)
-                        if self.db.save_account(
-                            email=acc.get("email", ""),
-                            password=acc.get("password", ""),
-                            first_name=acc.get("first_name", ""),
-                            last_name=acc.get("last_name", ""),
-                            proxy=acc.get("proxy", ""),
-                            strategy=acc.get("strategy", ""),
-                            sms_service=acc.get("sms_service", ""),
-                            phone_number=acc.get("phone_number", ""),
-                            birthday=acc.get("birthday", ""),
-                            gender=acc.get("gender", ""),
-                            status=acc.get("status", "active"),
-                            notes=acc.get("notes", ""),
-                            **profile,
-                            browser_checked_at=acc.get("browser_checked_at", ""),
-                            mailbox_checked_at=acc.get("mailbox_checked_at", ""),
-                            last_error_code=acc.get("last_error_code", ""),
-                        ):
-                            count += 1
+                        try:
+                            profile = self.db.migration_profile_projection(acc)
+                            if self.db.save_account(
+                                email=acc.get("email", ""),
+                                password=acc.get("password", ""),
+                                first_name=acc.get("first_name", ""),
+                                last_name=acc.get("last_name", ""),
+                                proxy=acc.get("proxy", ""),
+                                strategy=acc.get("strategy", ""),
+                                sms_service=acc.get("sms_service", ""),
+                                phone_number=acc.get("phone_number", ""),
+                                birthday=acc.get("birthday", ""),
+                                gender=acc.get("gender", ""),
+                                status=acc.get("status", "active"),
+                                notes=acc.get("notes", ""),
+                                **profile,
+                                browser_checked_at=acc.get("browser_checked_at", ""),
+                                mailbox_checked_at=acc.get("mailbox_checked_at", ""),
+                                last_error_code=acc.get("last_error_code", ""),
+                            ):
+                                count += 1
+                        except Exception as exc:
+                            logger.warning("Skipping invalid JSON account row: %s", type(exc).__name__)
                 migrated += count
                 logger.info(f"Migrated {count} accounts from accounts.json")
             except Exception as e:

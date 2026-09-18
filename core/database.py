@@ -491,6 +491,8 @@ class DatabaseManager:
         # Imports must preserve the direct API's type contract.  Coercing
         # numeric/boolean ids into strings can accidentally bind an unrelated
         # directory name, even though the resulting row is fail-closed.
+        if raw_profile_id not in (None, "") and not isinstance(raw_profile_id, str):
+            raise ValueError("Invalid profile_id")
         profile_id = raw_profile_id.strip() if isinstance(raw_profile_id, str) else ""
         engine = str(item.get("engine") or "").strip()
         profile_state = str(item.get("profile_state") or "").strip()
@@ -903,16 +905,21 @@ class DatabaseManager:
                     data = json.load(f)
                 for acc in data:
                     if isinstance(acc, dict) and 'email' in acc and 'password' in acc:
-                        profile = self.migration_profile_projection(acc)
-                        if self.save_account(
-                            email=acc.get('email'),
-                            password=acc.get('password'),
-                            first_name=acc.get('first_name', ''),
-                            last_name=acc.get('last_name', ''),
-                            status=acc.get('status', 'active'),
-                            **profile,
-                        ):
-                            migrated_count += 1
+                        try:
+                            profile = self.migration_profile_projection(acc)
+                            if self.save_account(
+                                email=acc.get('email'),
+                                password=acc.get('password'),
+                                first_name=acc.get('first_name', ''),
+                                last_name=acc.get('last_name', ''),
+                                status=acc.get('status', 'active'),
+                                **profile,
+                            ):
+                                migrated_count += 1
+                        except Exception as exc:
+                            # One malformed legacy row must not prevent valid
+                            # rows in the same import from being recovered.
+                            logger.warning("Skipping invalid JSON account row: %s", type(exc).__name__)
             except Exception as e:
                 logger.error("JSON migration failed: %s", type(e).__name__)
 
