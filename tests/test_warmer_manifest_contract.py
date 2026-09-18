@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from core.profile_runtime import ProfileRuntime
+from tests.provider_transport_fakes import ProviderContext, install_selenium_provider
 
 
 def _valid_auth_cookie():
@@ -118,7 +119,7 @@ class WarmerManifestContractTests(unittest.TestCase):
 
         class Manager:
             page = Page()
-            context = types.SimpleNamespace(cookies=lambda: [_valid_auth_cookie()])
+            context = ProviderContext("bound@example.test", [_valid_auth_cookie()])
             closed = False
             async def initialize(self, **kwargs):
                 events.append("open")
@@ -168,7 +169,7 @@ class WarmerManifestContractTests(unittest.TestCase):
         events = []
 
         class Page:
-            url = "https://mail.google.com/"
+            url = "https://mail.google.com/mail/u/0/#inbox"
 
             async def goto(self, *_args, **_kwargs):
                 events.append("probe")
@@ -196,7 +197,7 @@ class WarmerManifestContractTests(unittest.TestCase):
             def __init__(self):
                 events.append("adapter-init")
                 self.page = Page()
-                self.context = Context()
+                self.context = ProviderContext("bound@example.test", [_valid_auth_cookie()])
 
             async def initialize(self, **_kwargs):
                 events.append("open")
@@ -297,7 +298,7 @@ class WarmerManifestContractTests(unittest.TestCase):
         from core.account_warmer import warm_account_playwright
 
         class Page:
-            url = "https://mail.google.com/"
+            url = "https://mail.google.com/mail/u/0/#inbox"
 
             async def goto(self, *_args, **_kwargs):
                 return None
@@ -317,7 +318,7 @@ class WarmerManifestContractTests(unittest.TestCase):
         class Manager:
             def __init__(self):
                 self.page = Page()
-                self.context = types.SimpleNamespace(cookies=lambda: [])
+                self.context = ProviderContext("other@example.test", [])
                 self.closed = False
 
             async def initialize(self, **_kwargs):
@@ -351,6 +352,7 @@ class WarmerManifestContractTests(unittest.TestCase):
 
         class Driver:
             page_source = "Inbox Compose Search mail"
+            current_url = "https://mail.google.com/mail/u/0/#inbox"
 
             def __init__(self):
                 self.closed = False
@@ -368,6 +370,7 @@ class WarmerManifestContractTests(unittest.TestCase):
                 self.closed = True
 
         driver = Driver()
+        install_selenium_provider(driver, "other@example.test")
         fake_runner = types.SimpleNamespace(create_driver=lambda **_kwargs: driver)
         by = types.SimpleNamespace(CSS_SELECTOR="css", XPATH="xpath")
         fake_modules = {
@@ -519,7 +522,7 @@ class WarmerManifestContractTests(unittest.TestCase):
 
         class Driver:
             page_source = "Inbox Compose Search mail"
-            current_url = "https://mail.google.com/"
+            current_url = "https://mail.google.com/mail/u/0/#inbox"
 
             def get(self, _url):
                 events.append("probe")
@@ -539,6 +542,7 @@ class WarmerManifestContractTests(unittest.TestCase):
                 self.closed = True
 
         driver = Driver()
+        install_selenium_provider(driver, "bound@example.test")
 
         def create_driver(**_kwargs):
             events.append("open")
@@ -600,7 +604,7 @@ class WarmerManifestContractTests(unittest.TestCase):
         from core.account_warmer import warm_account_playwright
 
         class Page:
-            url = "https://mail.google.com/"
+            url = "https://mail.google.com/mail/u/0/#inbox"
 
             async def goto(self, *_args, **_kwargs):
                 return None
@@ -620,7 +624,7 @@ class WarmerManifestContractTests(unittest.TestCase):
         class Manager:
             def __init__(self):
                 self.page = Page()
-                self.context = types.SimpleNamespace(cookies=lambda: [_valid_auth_cookie()])
+                self.context = ProviderContext(None, [_valid_auth_cookie()])
                 self.closed = False
                 self.closed = False
 
@@ -651,14 +655,14 @@ class WarmerManifestContractTests(unittest.TestCase):
                 ))
 
         self.assertFalse(result["success"])
-        self.assertEqual(result["browser_status"], "account_mismatch")
+        self.assertEqual(result["browser_status"], "identity_unavailable")
         self.assertTrue(manager.closed)
 
     def test_reconstructed_playwright_profile_persists_fresh_identity_verification(self):
         from core.account_warmer import warm_account_playwright
 
         class Page:
-            url = "https://mail.google.com/"
+            url = "https://mail.google.com/mail/u/0/#inbox"
 
             async def goto(self, *_args, **_kwargs):
                 return None
@@ -679,7 +683,7 @@ class WarmerManifestContractTests(unittest.TestCase):
         class Manager:
             def __init__(self):
                 self.page = Page()
-                self.context = types.SimpleNamespace(cookies=lambda: [_valid_auth_cookie()])
+                self.context = ProviderContext("bound@example.test", [_valid_auth_cookie()])
 
             async def initialize(self, **_kwargs):
                 return True
@@ -733,7 +737,7 @@ class WarmerManifestContractTests(unittest.TestCase):
 
             async def goto(self, url, **_kwargs):
                 events.append(("goto", url))
-                self.url = url
+                self.url = "https://accounts.google.com/signin" if self.phase == "signed_out" else url
 
             async def content(self):
                 if self.phase == "signed_out":
@@ -777,7 +781,7 @@ class WarmerManifestContractTests(unittest.TestCase):
         class Manager:
             def __init__(self):
                 self.page = Page()
-                self.context = Context()
+                self.context = ProviderContext("adopted@example.test", [_valid_auth_cookie()])
                 self.closed = False
 
             async def initialize(self, **_kwargs):
@@ -830,7 +834,7 @@ class WarmerManifestContractTests(unittest.TestCase):
 
         class Driver:
             page_source = "Inbox Compose Search mail"
-            current_url = "https://mail.google.com/"
+            current_url = "https://mail.google.com/mail/u/0/#inbox"
             closed = False
 
             def get(self, *_args):
@@ -843,9 +847,10 @@ class WarmerManifestContractTests(unittest.TestCase):
                 return [{"name": "SID"}]
 
             def quit(self):
-                pass
+                self.closed = True
 
         driver = Driver()
+        install_selenium_provider(driver, None)
         fake_runner = types.SimpleNamespace(create_driver=lambda **_kwargs: driver)
         by = types.SimpleNamespace(CSS_SELECTOR="css", XPATH="xpath")
         fake_modules = {
@@ -880,14 +885,14 @@ class WarmerManifestContractTests(unittest.TestCase):
                 )
 
         self.assertFalse(result["success"])
-        self.assertEqual(result["browser_status"], "account_mismatch")
+        self.assertEqual(result["browser_status"], "identity_unavailable")
 
     def test_reconstructed_selenium_profile_persists_fresh_identity_verification(self):
         from core.account_warmer import warm_account_selenium
 
         class Driver:
             page_source = "Inbox Compose Search mail"
-            current_url = "https://mail.google.com/"
+            current_url = "https://mail.google.com/mail/u/0/#inbox"
 
             def get(self, *_args):
                 return None
@@ -906,6 +911,7 @@ class WarmerManifestContractTests(unittest.TestCase):
                 self.closed = True
 
         driver = Driver()
+        install_selenium_provider(driver, "bound@example.test")
         fake_runner = types.SimpleNamespace(create_driver=lambda **_kwargs: driver)
         by = types.SimpleNamespace(CSS_SELECTOR="css", XPATH="xpath")
         fake_modules = {
@@ -968,7 +974,7 @@ class WarmerManifestContractTests(unittest.TestCase):
 
             def get(self, url):
                 events.append(("goto", url))
-                self.current_url = url
+                self.current_url = "https://accounts.google.com/signin" if self.phase == "signed_out" else url
 
             def execute_script(self, script):
                 if "querySelectorAll('[data-email" in script:
@@ -996,6 +1002,7 @@ class WarmerManifestContractTests(unittest.TestCase):
                 self.closed = True
 
         driver = Driver()
+        install_selenium_provider(driver, "adopted@example.test")
 
         class Wait:
             def __init__(self, *_args, **_kwargs):

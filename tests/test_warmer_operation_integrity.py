@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import patch
 
 from core.profile_runtime import ProfileRuntime
+from tests.provider_transport_fakes import ProviderContext, install_selenium_provider
 
 
 def _valid_auth_cookie():
@@ -60,7 +61,7 @@ class WarmerOperationIntegrityTests(unittest.TestCase):
         class Page:
             def __init__(self):
                 self.navigation_count = 0
-                self.url = "https://mail.google.com/"
+                self.url = "https://mail.google.com/mail/u/0/#inbox"
 
             async def goto(self, _url, **_kwargs):
                 self.navigation_count += 1
@@ -83,7 +84,7 @@ class WarmerOperationIntegrityTests(unittest.TestCase):
         class Manager:
             def __init__(self):
                 self.page = Page()
-                self.context = types.SimpleNamespace(cookies=lambda: [_valid_auth_cookie()])
+                self.context = ProviderContext("bound@example.test", [_valid_auth_cookie()])
                 self.closed = False
 
             async def initialize(self, **_kwargs):
@@ -125,7 +126,7 @@ class WarmerOperationIntegrityTests(unittest.TestCase):
 
         class Driver:
             page_source = "Inbox Compose Search mail"
-            current_url = "https://mail.google.com/"
+            current_url = "https://mail.google.com/mail/u/0/#inbox"
 
             def __init__(self):
                 self.navigation_count = 0
@@ -153,6 +154,7 @@ class WarmerOperationIntegrityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             runtime, handle = self._ready_profile(directory, "selenium")
             driver = Driver()
+            install_selenium_provider(driver)
             with patch("core.account_warmer.ProfileRuntime.from_environment", return_value=runtime), \
                  patch("core.account_warmer.time", self.Clock()), \
                  patch.dict(sys.modules, self._selenium_modules(driver)):
@@ -178,7 +180,7 @@ class WarmerOperationIntegrityTests(unittest.TestCase):
         from core.account_warmer import warm_account_playwright
 
         class Page:
-            url = "https://mail.google.com/"
+            url = "https://mail.google.com/mail/u/0/#inbox"
 
             async def goto(self, _url, **_kwargs):
                 return None
@@ -198,7 +200,7 @@ class WarmerOperationIntegrityTests(unittest.TestCase):
 
         class Manager:
             page = Page()
-            context = types.SimpleNamespace(cookies=lambda: [_valid_auth_cookie()])
+            context = ProviderContext("bound@example.test", [_valid_auth_cookie()])
 
             async def initialize(self, **_kwargs):
                 return True
@@ -232,11 +234,11 @@ class WarmerOperationIntegrityTests(unittest.TestCase):
         from core.account_warmer import warm_account_playwright
 
         class Page:
-            url = "https://mail.google.com/"
+            url = "https://mail.google.com/mail/u/0/#inbox"
 
         class Manager:
             page = Page()
-            context = types.SimpleNamespace(cookies=lambda: [_valid_auth_cookie()])
+            context = ProviderContext("bound@example.test", [_valid_auth_cookie()])
 
             async def initialize(self, **_kwargs):
                 raise RuntimeError("adapter initialization failed")
@@ -297,7 +299,7 @@ class WarmerOperationIntegrityTests(unittest.TestCase):
         from core.account_warmer import warm_account_playwright
 
         class Page:
-            url = "https://mail.google.com/"
+            url = "https://mail.google.com/mail/u/0/#inbox"
 
             async def goto(self, _url, **_kwargs):
                 return None
@@ -317,7 +319,7 @@ class WarmerOperationIntegrityTests(unittest.TestCase):
 
         class Manager:
             page = Page()
-            context = types.SimpleNamespace(cookies=lambda: [_valid_auth_cookie()])
+            context = ProviderContext("bound@example.test", [_valid_auth_cookie()])
 
             async def initialize(self, **_kwargs):
                 return True
@@ -346,7 +348,7 @@ class WarmerOperationIntegrityTests(unittest.TestCase):
         from core.account_warmer import warm_account_playwright
 
         class Page:
-            url = "https://mail.google.com/"
+            url = "https://mail.google.com/mail/u/0/#inbox"
 
             async def goto(self, _url, **_kwargs):
                 return None
@@ -366,7 +368,7 @@ class WarmerOperationIntegrityTests(unittest.TestCase):
 
         class Manager:
             page = Page()
-            context = types.SimpleNamespace(cookies=lambda: [_valid_auth_cookie()])
+            context = ProviderContext("bound@example.test", [_valid_auth_cookie()])
 
             async def initialize(self, **_kwargs):
                 return True
@@ -398,7 +400,7 @@ class WarmerOperationIntegrityTests(unittest.TestCase):
 
         class Driver:
             page_source = "Inbox Compose Search mail"
-            current_url = "https://mail.google.com/"
+            current_url = "https://mail.google.com/mail/u/0/#inbox"
 
             def get(self, _url):
                 return None
@@ -419,6 +421,7 @@ class WarmerOperationIntegrityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             runtime, handle = self._ready_profile(directory, "selenium")
             driver = Driver()
+            install_selenium_provider(driver)
             with patch("core.account_warmer.ProfileRuntime.from_environment", return_value=runtime), \
                  patch("core.account_warmer.time", self.Clock()), \
                  patch.dict(sys.modules, self._selenium_modules(driver)):
@@ -440,7 +443,7 @@ class WarmerOperationIntegrityTests(unittest.TestCase):
         from core.account_warmer import warm_account_playwright
 
         class Page:
-            url = "https://mail.google.com/"
+            url = "https://mail.google.com/mail/u/0/#inbox"
 
             async def goto(self, _url, **_kwargs):
                 return None
@@ -460,7 +463,7 @@ class WarmerOperationIntegrityTests(unittest.TestCase):
 
         class Manager:
             page = Page()
-            context = types.SimpleNamespace(cookies=lambda: [_valid_auth_cookie()])
+            context = ProviderContext("bound@example.test", [_valid_auth_cookie()])
 
             async def initialize(self, **_kwargs):
                 return True
@@ -506,7 +509,7 @@ class WarmerOperationIntegrityTests(unittest.TestCase):
         from core.account_warmer import warm_account_playwright
 
         class Page:
-            url = "https://mail.google.com/"
+            url = "https://mail.google.com/mail/u/0/#inbox"
 
             def __init__(self):
                 self.started = None
@@ -531,7 +534,7 @@ class WarmerOperationIntegrityTests(unittest.TestCase):
         class Manager:
             def __init__(self):
                 self.page = Page()
-                self.context = types.SimpleNamespace(cookies=lambda: [_valid_auth_cookie()])
+                self.context = ProviderContext("bound@example.test", [_valid_auth_cookie()])
                 self.close_started = None
                 self.close_release = None
                 self.closed = False
@@ -579,7 +582,7 @@ class WarmerOperationIntegrityTests(unittest.TestCase):
         from core.account_warmer import warm_account_playwright
 
         class Page:
-            url = "https://mail.google.com/"
+            url = "https://mail.google.com/mail/u/0/#inbox"
 
             async def goto(self, _url, **_kwargs):
                 return None
@@ -599,7 +602,7 @@ class WarmerOperationIntegrityTests(unittest.TestCase):
 
         class Manager:
             page = Page()
-            context = types.SimpleNamespace(cookies=lambda: [_valid_auth_cookie()])
+            context = ProviderContext("bound@example.test", [_valid_auth_cookie()])
 
             async def initialize(self, **_kwargs):
                 return True
@@ -634,7 +637,7 @@ class WarmerOperationIntegrityTests(unittest.TestCase):
                 return None
 
         class Page:
-            url = "https://mail.google.com/"
+            url = "https://mail.google.com/mail/u/0/#inbox"
 
             async def goto(self, _url, **_kwargs):
                 return None
@@ -654,7 +657,7 @@ class WarmerOperationIntegrityTests(unittest.TestCase):
 
         class Manager:
             page = Page()
-            context = types.SimpleNamespace(cookies=lambda: [_valid_auth_cookie()])
+            context = ProviderContext("bound@example.test", [_valid_auth_cookie()])
             process = Process()
 
             async def initialize(self, **_kwargs):
@@ -857,7 +860,7 @@ class WarmerOperationIntegrityTests(unittest.TestCase):
         from core.account_warmer import warm_account_playwright
 
         class Page:
-            url = "https://mail.google.com/"
+            url = "https://mail.google.com/mail/u/0/#inbox"
 
             async def goto(self, _url, **_kwargs):
                 return None
@@ -878,7 +881,7 @@ class WarmerOperationIntegrityTests(unittest.TestCase):
         class Manager:
             def __init__(self):
                 self.page = Page()
-                self.context = types.SimpleNamespace(cookies=lambda: [_valid_auth_cookie()])
+                self.context = ProviderContext("bound@example.test", [_valid_auth_cookie()])
                 self.closed = False
 
             async def initialize(self, **_kwargs):
@@ -931,7 +934,7 @@ class WarmerOperationIntegrityTests(unittest.TestCase):
         from core.account_warmer import warm_account_playwright
 
         class Page:
-            url = "https://mail.google.com/"
+            url = "https://mail.google.com/mail/u/0/#inbox"
 
             async def goto(self, _url, **_kwargs):
                 return None
@@ -952,7 +955,7 @@ class WarmerOperationIntegrityTests(unittest.TestCase):
         class Manager:
             def __init__(self):
                 self.page = Page()
-                self.context = types.SimpleNamespace(cookies=lambda: [_valid_auth_cookie()])
+                self.context = ProviderContext("bound@example.test", [_valid_auth_cookie()])
                 self.closed = False
 
             async def initialize(self, **_kwargs):

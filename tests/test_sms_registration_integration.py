@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
 from core import phone_bypass
+from tests.provider_transport_fakes import GMAIL_URL, install_selenium_provider
 
 
 class _Input:
@@ -373,7 +374,7 @@ class SmsRegistrationIntegrationTests(unittest.TestCase):
         driver.page_source = "Inbox Compose Search mail"
 
         def navigate(url):
-            driver.current_url = url
+            driver.current_url = GMAIL_URL if url == "https://mail.google.com/" else url
 
         def execute(script, *_args):
             if "querySelectorAll('[data-email" in script:
@@ -384,6 +385,7 @@ class SmsRegistrationIntegrationTests(unittest.TestCase):
 
         driver.get.side_effect = navigate
         driver.execute_script.side_effect = execute
+        install_selenium_provider(driver, "user@gmail.com")
         driver.get_cookies.return_value = [{
             "name": "SID", "value": "live-registration-session",
             "domain": ".google.com", "secure": True,

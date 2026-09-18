@@ -15,10 +15,12 @@ from core.profile_runtime import (
 
 
 class _AsyncPage:
-    def __init__(self, text="Inbox Compose Search mail", observed=None, provider=False):
+    def __init__(self, text="Inbox Compose Search mail", observed=None,
+                 provider=False, provider_email=None):
         self.url = "https://mail.google.com/mail/u/0/#inbox"
         self.text = text
         self.observed = observed
+        self.provider_email = provider_email
         self.visited = []
         self.provider = provider
         self.closed = False
@@ -27,7 +29,7 @@ class _AsyncPage:
         self.visited.append(url)
         if "ListAccounts" in url:
             self.url = IDENTITY_ENDPOINT
-            email = self.observed
+            email = self.provider_email
             payload = {"accounts": [] if not email else [{"slot": 0, "email": email, "valid_session": True}]}
             return types.SimpleNamespace(
                 status=200,
@@ -75,7 +77,10 @@ class _AsyncContext:
 class _PlaywrightManager:
     def __init__(self, page):
         self.page = page
-        self.context = _AsyncContext(provider=_AsyncPage(observed=page.observed))
+        self.context = _AsyncContext(provider=_AsyncPage(
+            observed=page.observed,
+            provider_email=page.provider_email or page.observed,
+        ))
         self.closed = False
 
     async def initialize(self, **_kwargs):
@@ -182,7 +187,10 @@ class BrowserProbeContractTests(unittest.TestCase):
 
     def test_playwright_probe_normalizes_email_embedded_in_account_label(self):
         runtime, handle = self._runtime()
-        page = _AsyncPage(observed="Google Account: user@example.test")
+        page = _AsyncPage(
+            observed="Google Account: user@example.test",
+            provider_email="user@example.test",
+        )
         manager = _PlaywrightManager(page)
         with patch.dict(sys.modules, {
             "core.stealth_browser": types.SimpleNamespace(
@@ -216,7 +224,9 @@ class BrowserProbeContractTests(unittest.TestCase):
 
     def test_playwright_probe_requires_identity_for_reconstructed_profile(self):
         runtime, handle = self._runtime(identity_state="identity_reconstructed")
-        manager = _PlaywrightManager(_AsyncPage(observed=None))
+        manager = _PlaywrightManager(_AsyncPage(
+            observed=None, provider_email="other@example.test"
+        ))
         with patch.dict(sys.modules, {
             "core.stealth_browser": types.SimpleNamespace(
                 PlaywrightStealthManager=lambda: manager
@@ -236,7 +246,9 @@ class BrowserProbeContractTests(unittest.TestCase):
         manifest["identity_verified"] = True
         manifest["identity_verified_email"] = "user@example.test"
         runtime._atomic_json(handle.manifest_path, manifest)
-        manager = _PlaywrightManager(_AsyncPage(observed=None))
+        manager = _PlaywrightManager(_AsyncPage(
+            observed=None, provider_email="other@example.test"
+        ))
         with patch.dict(sys.modules, {
             "core.stealth_browser": types.SimpleNamespace(
                 PlaywrightStealthManager=lambda: manager

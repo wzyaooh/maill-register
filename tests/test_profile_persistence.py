@@ -287,14 +287,38 @@ class ProfilePersistenceTests(unittest.TestCase):
             self.assertEqual(account["overall_status"], "unknown")
 
     def test_playwright_warmer_uses_existing_authenticated_profile(self):
+        provider_body = b")]}\'\n" + json.dumps({
+            "accounts": [{
+                "slot": 0,
+                "email": "profile@example.test",
+                "valid_session": True,
+            }],
+        }).encode()
+
+        class Response:
+            status = 200
+            url = "https://accounts.google.com/ListAccounts?gpsia=1&source=ChromiumBrowser&json=standard"
+
+            async def body(self):
+                return provider_body
+
         class Page:
-            def __init__(self):
-                self.url = ""
+            def __init__(self, *, provider=False):
+                self.url = "about:blank" if provider else ""
+                self.provider = provider
                 self.visited = []
+                self.closed = False
 
             async def goto(self, url, **kwargs):
                 self.visited.append(url)
+                if "ListAccounts" in url:
+                    self.url = Response.url
+                    return Response()
                 self.url = "https://mail.google.com/mail/u/0/#inbox"
+                return types.SimpleNamespace(status=200)
+
+            async def close(self):
+                self.closed = True
 
             async def content(self):
                 return "Inbox Compose Search mail"
@@ -306,8 +330,6 @@ class ProfilePersistenceTests(unittest.TestCase):
                 raise AssertionError("existing profile should not query login fields")
 
             async def evaluate(self, script, **_kwargs):
-                if "querySelectorAll('[data-email" in script:
-                    return "profile@example.test"
                 if "[role=\"main\"]" in script:
                     return True
                 return None
@@ -315,10 +337,11 @@ class ProfilePersistenceTests(unittest.TestCase):
         class Context:
             def __init__(self):
                 self.page = Page()
+                self.provider = Page(provider=True)
                 self.closed = False
 
             async def new_page(self):
-                return self.page
+                return self.provider
 
             async def close(self):
                 self.closed = True
@@ -340,6 +363,7 @@ class ProfilePersistenceTests(unittest.TestCase):
 
             async def close(self):
                 await self.context.close()
+                return {"success": True, "browser_process_stopped": True}
 
         with tempfile.TemporaryDirectory() as directory:
             runtime = ProfileRuntime(directory)
@@ -365,26 +389,68 @@ class ProfilePersistenceTests(unittest.TestCase):
             self.assertEqual(manager.initialized_kwargs["profile_manifest"]["profile_id"], handle.profile_id)
 
     def test_selenium_warmer_uses_existing_authenticated_profile(self):
+        provider_body = b")]}\'\n" + json.dumps({
+            "accounts": [{
+                "slot": 0,
+                "email": "profile@example.test",
+                "valid_session": True,
+            }],
+        }).encode()
+
         class Driver:
             def __init__(self):
                 self.current_url = ""
-                self.page_source = "Inbox Compose Search mail"
                 self.visited = []
                 self.closed = False
+                self.current_window_handle = "business"
+                self._handles = ["business"]
+
+                class SwitchTo:
+                    def __init__(inner, driver):
+                        inner.driver = driver
+
+                    def new_window(inner, _kind):
+                        inner.driver._handles.append("provider")
+                        inner.driver.current_window_handle = "provider"
+
+                    def window(inner, handle):
+                        if handle not in inner.driver._handles:
+                            raise RuntimeError("unknown window")
+                        inner.driver.current_window_handle = handle
+
+                self.switch_to = SwitchTo(self)
+
+            @property
+            def window_handles(self):
+                return list(self._handles)
+
+            @property
+            def page_source(self):
+                if self.current_window_handle == "provider":
+                    return provider_body.decode()
+                return "Inbox Compose Search mail"
 
             def get(self, url):
                 self.visited.append(url)
+                if "ListAccounts" in url:
+                    self.current_url = "https://accounts.google.com/ListAccounts?gpsia=1&source=ChromiumBrowser&json=standard"
+                    return
                 self.current_url = "https://mail.google.com/mail/u/0/#inbox"
 
             def get_cookies(self):
                 return [_valid_auth_cookie()]
 
             def execute_script(self, script, **_kwargs):
-                if "querySelectorAll('[data-email" in script:
-                    return "profile@example.test"
+                if "document.body" in script:
+                    return provider_body.decode()
                 if "[role=\"main\"]" in script:
-                    return True
+                    return self.current_window_handle == "business"
                 return None
+
+            def close(self):
+                if self.current_window_handle != "business":
+                    self._handles.remove(self.current_window_handle)
+                    self.current_window_handle = "business"
 
             def quit(self):
                 self.closed = True
@@ -434,7 +500,10 @@ class ProfilePersistenceTests(unittest.TestCase):
                         "profile@example.test", "secret", 0, profile_id=handle.profile_id
                     )
                 self.assertTrue(result["success"])
-                self.assertEqual(driver.visited, ["https://mail.google.com/"])
+                self.assertEqual(driver.visited, [
+                    "https://mail.google.com/",
+                    "https://accounts.google.com/ListAccounts?gpsia=1&source=ChromiumBrowser&json=standard",
+                ])
                 self.assertEqual(captured["profile_path"], str(handle.path))
                 self.assertEqual(captured["profile_manifest"]["profile_id"], handle.profile_id)
                 self.assertTrue(driver.closed)
